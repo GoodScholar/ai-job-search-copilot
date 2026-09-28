@@ -62,11 +62,11 @@
 - Consumes: 已批准外部 DESIGN/spec、当前四项顶层导航和画像上下文入口。
 - Produces: 统一语义 tokens、232px 桌面侧栏/移动底栏、页面容器、状态/焦点/触控/减动效基础类。
 
-- [ ] **Step 1: 写失败测试**：断言桌面壳层具有侧栏 landmark、四项顶层语义、未启用投递的真实状态、画像次级入口和移动导航；`globals.test.ts` 只验证可观察的可访问/布局契约，不镜像 CSS 源文本。
-- [ ] **Step 2: 验证 RED**：运行 `pnpm --filter web exec vitest run components/workbench/workbench-header.test.tsx components/workbench/workbench-navigation.test.tsx app/globals.test.ts`，确认因新壳层/语义缺失而失败。
-- [ ] **Step 3: 最小实现**：正式纳入三份设计文档，替换旧纸张 tokens，重组 header/navigation/layout；共用 CSS 只承载可复用语法，不用页面特例堆叠覆盖。
-- [ ] **Step 4: 验证 GREEN**：重复 Step 2 命令并确认通过。
-- [ ] **Step 5: Commit**：`git commit -m "feat(web): establish career lens product shell"`。
+- [x] **Step 1: 写失败测试**：断言桌面壳层具有侧栏 landmark、四项顶层语义、未启用投递的真实状态、画像次级入口和移动导航；`globals.test.ts` 只验证可观察的可访问/布局契约，不镜像 CSS 源文本。
+- [x] **Step 2: 验证 RED**：运行 `pnpm --filter web exec vitest run components/workbench/workbench-header.test.tsx components/workbench/workbench-navigation.test.tsx app/globals.test.ts`，确认因新壳层/语义缺失而失败。
+- [x] **Step 3: 最小实现**：正式纳入三份设计文档，替换旧纸张 tokens，重组 header/navigation/layout；共用 CSS 只承载可复用语法，不用页面特例堆叠覆盖。
+- [x] **Step 4: 验证 GREEN**：重复 Step 2 命令并确认通过。
+- [x] **Step 5: Commit**：`git commit -m "feat(web): establish career lens product shell"`。
 
 ### Task 2: 迁移营销页与登录边界
 
@@ -87,11 +87,11 @@
 - Consumes: `resolveLoginReturnTo`, `startDevSessionAction`,真实 auth mode、A01 权威图。
 - Produces: 同比缩放的 A01 内板、机会→事实→决定关系、六步旅程、移动前置登录面板。
 
-- [ ] **Step 1: 写失败测试**：营销测试断言单一主 CTA、完整三对象关系和六步旅程；登录测试断言 safe return path 与真实 action 不变、移动阅读顺序可由 DOM 语义确认。
-- [ ] **Step 2: 验证 RED**：运行相应 Vitest 文件，确认旧英雄/纸张结构失败。
-- [ ] **Step 3: 最小实现**：按 1160×638 统一内板实现 A01；登录页使用低对比透镜和紧凑访问面板，不改变 action/returnTo。
-- [ ] **Step 4: 验证 GREEN**：运行定向 Vitest 与 `pnpm --filter web test:e2e -- landing.spec.ts --workers=1`。
-- [ ] **Step 5: Commit**：`git commit -m "feat(web): migrate marketing and login surfaces"`。
+- [x] **Step 1: 写失败测试**：营销测试断言单一主 CTA、完整三对象关系和六步旅程；登录测试断言 safe return path 与真实 action 不变、移动阅读顺序可由 DOM 语义确认。
+- [x] **Step 2: 验证 RED**：运行相应 Vitest 文件，确认旧英雄/纸张结构失败。
+- [x] **Step 3: 最小实现**：按 1160×638 统一内板实现 A01；登录页使用低对比透镜和紧凑访问面板，不改变 action/returnTo。
+- [x] **Step 4: 验证 GREEN**：运行定向 Vitest 与 `pnpm --filter web test:e2e -- landing.spec.ts --workers=1`。
+- [x] **Step 5: Commit**：`git commit -m "feat(web): migrate marketing and login surfaces"`。
 
 ### Task 3: 迁移今日决策台与四个既有任务态
 

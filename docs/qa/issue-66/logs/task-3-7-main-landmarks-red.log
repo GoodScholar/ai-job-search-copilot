@@ -1,0 +1,5279 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ components/workbench/model-connection-view.test.tsx (9 tests | 5 failed) 359ms
+   × 用文字、标题和实时区域展示 { status: 'unverified', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_CONFIGURATION_MISSING', reasonSummary: '尚未完成模型连接检查', impact: '当前无法确认模型功能是否可用。', suggestedActions: [ '请运行模型连接检查。' ], checkedAt: null, latencyBucket: null, retryAt: null } 状态 95ms
+   × 用文字、标题和实时区域展示 { status: 'checking', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_CONFIGURATION_MISSING', reasonSummary: '模型连接正在检查', impact: '当前无法确认模型功能是否可用。', suggestedActions: [ '请稍后刷新。' ], checkedAt: null, latencyBucket: null, retryAt: null } 状态 36ms
+   × 用文字、标题和实时区域展示 { status: 'available', checks: { authentication: 'passed', modelAvailability: 'passed', structuredOutput: 'passed', timeout: 'passed' }, reasonCode: 'MODEL_DIAGNOSTIC_AVAILABLE', reasonSummary: '模型连接正常', impact: '模型功能可用。', suggestedActions: [], checkedAt: '2026-09-05T00:00:00.000Z', latencyBucket: 'under_1s', retryAt: null } 状态 32ms
+   × 用文字、标题和实时区域展示 { status: 'failed', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED', reasonSummary: '模型服务认证失败', impact: '模型功能暂不可用。', suggestedActions: [ '请联系部署管理员检查服务凭据。' ], checkedAt: '2026-09-05T00:00:00.000Z', latencyBucket: 'under_1s', retryAt: '2099-09-05T00:01:00.000Z' } 状态 32ms
+   × 用文字、标题和实时区域展示 { status: 'temporarily_unavailable', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE', reasonSummary: '模型服务暂不可用', impact: '模型功能暂时不可用。', suggestedActions: [ '请稍后重试。' ], checkedAt: '2026-09-05T00:00:00.000Z', latencyBucket: '5_to_10s', retryAt: null } 状态 32ms
+ ❯ components/workbench/job-targets-view.test.tsx (7 tests | 1 failed) 471ms
+   × prepopulates but never saves evidence-labelled candidate directions until the user submits the complete target form 174ms
+ ❯ components/workbench/job-import-view.test.tsx (14 tests | 1 failed) 593ms
+   × 提供粘贴和 Markdown 上传入口、未知字段与可访问状态 92ms
+ ❯ components/workbench/workbench-home-view.test.tsx (17 tests | 1 failed) 450ms
+   × 把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力 153ms
+ ❯ components/workbench/account-run-policy-view.test.tsx (19 tests | 1 failed) 958ms
+   × 停止全部运行后重新读取权威状态，并说明安全检查点终止与在途费用 269ms
+ ❯ components/workbench/company-watchlist-view.test.tsx (14 tests | 1 failed) 1400ms
+   × 为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提示 114ms
+ ❯ components/workbench/profile-import-view.test.tsx (34 tests | 1 failed) 2395ms
+   × links from trusted profile facts to confirmation of job targets 125ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  components/workbench/account-run-policy-view.test.tsx > 停止全部运行后重新读取权威状态，并说明安全检查点终止与在途费用
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "账户运行策略"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container profile-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "账户运行策略":
+  [36m<h1 />[39m
+
+  Name "账户运行控制":
+  [36m<h2[39m
+    [33mid[39m=[32m"account-run-control-title"[39m
+  [36m/>[39m
+
+  Name "当前策略对照":
+  [36m<h2[39m
+    [33mid[39m=[32m"run-policy-comparison-title"[39m
+  [36m/>[39m
+
+  Name "调整运行策略":
+  [36m<h2[39m
+    [33mid[39m=[32m"run-policy-settings-title"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现":
+  [36m<h3 />[39m
+
+  Name "深度匹配":
+  [36m<h3 />[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "账户运行控制":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"account-run-control-title"[39m
+    [33mclass[39m=[32m"job-targets-section"[39m
+  [36m/>[39m
+
+  Name "当前策略对照":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"run-policy-comparison-title"[39m
+    [33mclass[39m=[32m"job-targets-section"[39m
+  [36m/>[39m
+
+  Name "调整运行策略":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"run-policy-settings-title"[39m
+    [33mclass[39m=[32m"job-targets-section"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现":
+  [36m<section[39m
+    [33maria-label[39m=[32m"公开岗位发现"[39m
+  [36m/>[39m
+
+  Name "深度匹配":
+  [36m<section[39m
+    [33maria-label[39m=[32m"深度匹配"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "停止全部运行":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50 h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "保存运行策略":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "查看修订历史":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50 h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  table:
+
+  Name "":
+  [36m<table />[39m
+
+  --------------------------------------------------
+  rowgroup:
+
+  Name "":
+  [36m<thead />[39m
+
+  Name "":
+  [36m<tbody />[39m
+
+  --------------------------------------------------
+  row:
+
+  Name "设置 系统默认 硬上限 你的设置 最终生效":
+  [36m<tr />[39m
+
+  Name "每次运行来源数量 50 50 20 20":
+  [36m<tr />[39m
+
+  Name "公开查询次数上限 5 10 3 3":
+  [36m<tr />[39m
+
+  Name "验证候选数上限 10 10 6 6":
+  [36m<tr />[39m
+
+  Name "公开岗位发现 · 最长运行时长（分钟） 3 3 3 3":
+  [36m<tr />[39m
+
+  Name "公开岗位发现 · 最多尝试次数 3 3 3 3":
+  [36m<tr />[39m
+
+  Name "公开岗位发现 · 最多工具调用次数 60 60 60 60":
+  [36m<tr />[39m
+
+  Name "公开岗位发现 · 保留岗位结果数 5 5 5 5":
+  [36m<tr />[39m
+
+  Name "公开岗位发现 · 最多模型调用次数 0 0 0 0":
+  [36m<tr />[39m
+
+  Name "公开岗位发现 · 最多模型处理量 0 0 0 0":
+  [36m<tr />[39m
+
+  Name "深度匹配 · 最长运行时长（分钟） 3 3 3 3":
+  [36m<tr />[39m
+
+  Name "深度匹配 · 最多尝试次数 3 3 3 3":
+  [36m<tr />[39m
+
+  Name "深度匹配 · 最多工具调用次数 0 0 0 0":
+  [36m<tr />[39m
+
+  Name "深度匹配 · 最多生成推荐数 10 10 10 10":
+  [36m<tr />[39m
+
+  Name "深度匹配 · 最多模型调用次数 10 10 10 10":
+  [36m<tr />[39m
+
+  Name "深度匹配 · 最多模型处理量 20000 20000 20000 20000":
+  [36m<tr />[39m
+
+  Name "公开查询 已启用 可启用 已启用 已启用":
+  [36m<tr />[39m
+
+  Name "后台运行时间 08:00–22:00 全天可用 08:00–22:00 08:00–22:00":
+  [36m<tr />[39m
+
+  --------------------------------------------------
+  columnheader:
+
+  Name "设置":
+  [36m<th[39m
+    [33mscope[39m=[32m"col"[39m
+  [36m/>[39m
+
+  Name "系统默认":
+  [36m<th[39m
+    [33mscope[39m=[32m"col"[39m
+  [36m/>[39m
+
+  Name "硬上限":
+  [36m<th[39m
+    [33mscope[39m=[32m"col"[39m
+  [36m/>[39m
+
+  Name "你的设置":
+  [36m<th[39m
+    [33mscope[39m=[32m"col"[39m
+  [36m/>[39m
+
+  Name "最终生效":
+  [36m<th[39m
+    [33mscope[39m=[32m"col"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  rowheader:
+
+  Name "每次运行来源数量":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开查询次数上限":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "验证候选数上限":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现 · 最长运行时长（分钟）":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现 · 最多尝试次数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现 · 最多工具调用次数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现 · 保留岗位结果数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现 · 最多模型调用次数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现 · 最多模型处理量":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "深度匹配 · 最长运行时长（分钟）":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "深度匹配 · 最多尝试次数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "深度匹配 · 最多工具调用次数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "深度匹配 · 最多生成推荐数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "深度匹配 · 最多模型调用次数":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "深度匹配 · 最多模型处理量":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "公开查询":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  Name "后台运行时间":
+  [36m<th[39m
+    [33mscope[39m=[32m"row"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  cell:
+
+  Name "50":
+  [36m<td />[39m
+
+  Name "50":
+  [36m<td />[39m
+
+  Name "20":
+  [36m<td />[39m
+
+  Name "20":
+  [36m<td />[39m
+
+  Name "5":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "6":
+  [36m<td />[39m
+
+  Name "6":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "60":
+  [36m<td />[39m
+
+  Name "60":
+  [36m<td />[39m
+
+  Name "60":
+  [36m<td />[39m
+
+  Name "60":
+  [36m<td />[39m
+
+  Name "5":
+  [36m<td />[39m
+
+  Name "5":
+  [36m<td />[39m
+
+  Name "5":
+  [36m<td />[39m
+
+  Name "5":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "3":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "0":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "10":
+  [36m<td />[39m
+
+  Name "20000":
+  [36m<td />[39m
+
+  Name "20000":
+  [36m<td />[39m
+
+  Name "20000":
+  [36m<td />[39m
+
+  Name "20000":
+  [36m<td />[39m
+
+  Name "已启用":
+  [36m<td />[39m
+
+  Name "可启用":
+  [36m<td />[39m
+
+  Name "已启用":
+  [36m<td />[39m
+
+  Name "已启用":
+  [36m<td />[39m
+
+  Name "08:00–22:00":
+  [36m<td />[39m
+
+  Name "全天可用":
+  [36m<td />[39m
+
+  Name "08:00–22:00":
+  [36m<td />[39m
+
+  Name "08:00–22:00":
+  [36m<td />[39m
+
+  --------------------------------------------------
+  group:
+
+  Name "公开岗位发现":
+  [36m<fieldset[39m
+    [33mclass[39m=[32m"run-policy-fieldset"[39m
+  [36m/>[39m
+
+  Name "每次运行预算":
+  [36m<fieldset[39m
+    [33mclass[39m=[32m"run-policy-fieldset"[39m
+  [36m/>[39m
+
+  Name "后台运行时间":
+  [36m<fieldset[39m
+    [33mclass[39m=[32m"run-policy-fieldset"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  spinbutton:
+
+  Name "每次运行来源数量":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"50"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"20"[39m
+  [36m/>[39m
+
+  Name "每次运行最多执行公开查询":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"10"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  Name "每次运行最多验证候选":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"10"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"6"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现最长运行时长（分钟）":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"3"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现最多尝试次数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"3"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现最多工具调用次数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"60"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"60"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现保留岗位结果数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"5"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"5"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现最多模型调用次数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"0"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "公开岗位发现最多模型处理量":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"0"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "深度匹配最长运行时长（分钟）":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"3"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  Name "深度匹配最多尝试次数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"3"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  Name "深度匹配最多工具调用次数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"0"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"0"[39m
+  [36m/>[39m
+
+  Name "深度匹配最多生成推荐数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"10"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"10"[39m
+  [36m/>[39m
+
+  Name "深度匹配最多模型调用次数":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"10"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"10"[39m
+  [36m/>[39m
+
+  Name "深度匹配最多模型处理量":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mmax[39m=[32m"20000"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"20000"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  checkbox:
+
+  Name "启用 AnySearch 公开查询":
+  [36m<input[39m
+    [33mchecked[39m=[32m""[39m
+    [33mtype[39m=[32m"checkbox"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m求职画像 · 运行策略[0m
+        [36m</p>[39m
+        [36m<h1>[39m
+          [0m账户运行策略[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统硬上限保护每次运行。你可以保存更保守的额度；手动运行不受后台窗口限制。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"account-run-control-title"[39m
+        [33mclass[39m=[32m"job-targets-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"account-run-control-title"[39m
+        [36m>[39m
+          [0m账户运行控制[0m
+        [36m</h2>[39m
+        [36m<p>[39m
+          [0m停止后将阻止新的运行和外部动作，正在运行的任务会在下一个安全检查点终止；已发出的请求可能仍产生费用。[0m
+        [36m</p>[39m
+        [36m<p>[39m
+          [0m解除全局停止只开放未来新运行，不会恢复旧运行；每日计划需要重新启用。[0m
+        [36m</p>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"run-policy-actions"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50 h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+            [33mdata-slot[39m=[32m"button"[39m
+            [33mtabindex[39m=[32m"0"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m停止全部运行[0m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"run-policy-comparison-title"[39m
+        [33mclass[39m=[32m"job-targets-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"run-policy-comparison-title"[39m
+        [36m>[39m
+          [0m当前策略对照[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"当前策略对照表，可横向滚动"[39m
+          [33mclass[39m=[32m"run-policy-table-wrap"[39m
+          [33mtabindex[39m=[32m"0"[39m
+        [36m>[39m
+          [36m<table>[39m
+            [36m<thead>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"col"[39m
+                [36m>[39m
+                  [0m设置[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"col"[39m
+                [36m>[39m
+                  [0m系统默认[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"col"[39m
+                [36m>[39m
+                  [0m硬上限[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"col"[39m
+                [36m>[39m
+                  [0m你的设置[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"col"[39m
+                [36m>[39m
+                  [0m最终生效[0m
+                [36m</th>[39m
+              [36m</tr>[39m
+            [36m</thead>[39m
+            [36m<tbody>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"row"[39m
+                [36m>[39m
+                  [0m每次运行来源数量[0m
+                [36m</th>[39m
+                [36m<td>[39m
+                  [0m50[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m50[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m20[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m20[0m
+                [36m</td>[39m
+              [36m</tr>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"row"[39m
+                [36m>[39m
+                  [0m公开查询次数上限[0m
+                [36m</th>[39m
+                [36m<td>[39m
+                  [0m5[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m10[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+              [36m</tr>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"row"[39m
+                [36m>[39m
+                  [0m验证候选数上限[0m
+                [36m</th>[39m
+                [36m<td>[39m
+                  [0m10[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m10[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m6[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m6[0m
+                [36m</td>[39m
+              [36m</tr>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"row"[39m
+                [36m>[39m
+                  [0m公开岗位发现[0m
+                  [0m · [0m
+                  [0m最长运行时长[0m
+                  [0m（分钟）[0m
+                [36m</th>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+              [36m</tr>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mscope[39m=[32m"row"[39m
+                [36m>[39m
+                  [0m公开岗位发现[0m
+                  [0m · [0m
+                  [0m最多尝试次数[0m
+                [36m</th>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39m
+                [36m<td>[39m
+                  [0m3[0m
+                [36m</td>[39...
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/account-run-policy-view.test.tsx:80:17
+     78|
+     79|   render(<AccountRunPolicyView initialControl={activeControl} initialP…
+     80|   expect(screen.getByRole("main", { name: "账户运行策略" })).toBeVisible();
+       |                 ^
+     81|   const button = screen.getByRole("button", { name: "停止全部运行" });
+     82|   expect(button).toBeEnabled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  components/workbench/company-watchlist-view.test.tsx > 为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提示
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "公司来源台账"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main company-watchlist-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "AI 应用工程的目标公司 Watchlist":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"company-watchlist-title"[39m
+    [33mclass[39m=[32m"company-watchlist-intro"[39m
+  [36m/>[39m
+
+  Name "添加目标公司":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"company-watchlist-form-title"[39m
+    [33mclass[39m=[32m"company-watchlist-section"[39m
+  [36m/>[39m
+
+  Name "已登记来源":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"company-watchlist-ledger-title"[39m
+    [33mclass[39m=[32m"company-watchlist-section"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"company-watchlist-version"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"company-watchlist-notice"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"profile-next-step"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "AI 应用工程的目标公司 Watchlist":
+  [36m<h1[39m
+    [33mid[39m=[32m"company-watchlist-title"[39m
+  [36m/>[39m
+
+  Name "添加目标公司":
+  [36m<h2[39m
+    [33mid[39m=[32m"company-watchlist-form-title"[39m
+  [36m/>[39m
+
+  Name "已登记来源":
+  [36m<h2[39m
+    [33mid[39m=[32m"company-watchlist-ledger-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "公司规范名称":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "公开招聘入口":
+  [36m<input[39m
+    [33maria-invalid[39m=[32m"false"[39m
+    [33minputmode[39m=[32m"url"[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "允许域":
+  [36m<input[39m
+    [33mplaceholder[39m=[32m"careers.example.com，jobs.example.com"[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "来源备注":
+  [36m<textarea />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "保存目标公司":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main company-watchlist-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"company-watchlist-title"[39m
+        [33mclass[39m=[32m"company-watchlist-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m求职目标 · 公开来源台账[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"company-watchlist-title"[39m
+        [36m>[39m
+          [0mAI 应用工程[0m
+          [0m的目标公司 Watchlist[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m为已确认的求职目标维护可验证的公开招聘来源。顺序决定优先级，已停用来源不会进入新的运行范围。[0m
+        [36m</p>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"company-watchlist-version"[39m
+        [36m>[39m
+          [0mWatchlist 版本 [0m
+          [0m0[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"company-watchlist-form-title"[39m
+        [33mclass[39m=[32m"company-watchlist-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"company-watchlist-form-title"[39m
+        [36m>[39m
+          [0m添加目标公司[0m
+        [36m</h2>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"company-watchlist-notice"[39m
+        [36m>[39m
+          [0m不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。[0m
+        [36m</p>[39m
+        [36m<form[39m
+          [33mclass[39m=[32m"company-watchlist-form"[39m
+        [36m>[39m
+          [36m<label>[39m
+            [0m公司规范名称[0m
+            [36m<input[39m
+              [33maria-invalid[39m=[32m"false"[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m公开招聘入口[0m
+            [36m<input[39m
+              [33maria-invalid[39m=[32m"false"[39m
+              [33minputmode[39m=[32m"url"[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m允许域[0m
+            [36m<input[39m
+              [33mplaceholder[39m=[32m"careers.example.com，jobs.example.com"[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m来源备注[0m
+            [36m<textarea />[39m
+          [36m</label>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"company-watchlist-form-actions"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33mclass[39m=[32m"workbench-touch-target"[39m
+              [33mtype[39m=[32m"submit"[39m
+            [36m>[39m
+              [0m保存目标公司[0m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</form>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"company-watchlist-ledger-title"[39m
+        [33mclass[39m=[32m"company-watchlist-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"company-watchlist-ledger-title"[39m
+        [36m>[39m
+          [0m已登记来源[0m
+        [36m</h2>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/company-watchlist-view.test.tsx:47:17
+     45|   render(<CompanyWatchlistView initialOverview={overview()} />);
+     46|
+     47|   expect(screen.getByRole("main", { name: "公司来源台账" })).toBeVisible();
+       |                 ^
+     48|   expect(screen.getByRole("heading", { name: "AI 应用工程的目标公司 Watchlist" …
+     49|   const submitButtons = screen.getAllByRole("button").filter((button) …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  components/workbench/job-import-view.test.tsx > 提供粘贴和 Markdown 上传入口、未知字段与可访问状态
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "岗位导入"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main job-import-workbench"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "导入岗位":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-import-title"[39m
+    [33mclass[39m=[32m"workbench-intro"[39m
+  [36m/>[39m
+
+  Name "添加岗位内容":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-import-form-title"[39m
+    [33mclass[39m=[32m"job-import-panel"[39m
+  [36m/>[39m
+
+  Name "最近导入":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"recent-job-imports-title"[39m
+    [33mclass[39m=[32m"job-import-panel"[39m
+  [36m/>[39m
+
+  Name "规范化岗位机会":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"opportunity-title"[39m
+    [33mclass[39m=[32m"job-import-panel"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "导入岗位":
+  [36m<h1[39m
+    [33mid[39m=[32m"job-import-title"[39m
+  [36m/>[39m
+
+  Name "添加岗位内容":
+  [36m<h2[39m
+    [33mid[39m=[32m"job-import-form-title"[39m
+  [36m/>[39m
+
+  Name "最近导入":
+  [36m<h2[39m
+    [33mid[39m=[32m"recent-job-imports-title"[39m
+  [36m/>[39m
+
+  Name "规范化岗位机会":
+  [36m<h2[39m
+    [33mid[39m=[32m"opportunity-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tablist:
+
+  Name "导入方式":
+  [36m<div[39m
+    [33maria-label[39m=[32m"导入方式"[39m
+    [33mclass[39m=[32m"job-import-tabs"[39m
+    [33mrole[39m=[32m"tablist"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tab:
+
+  Name "粘贴岗位描述":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"paste-panel"[39m
+    [33maria-selected[39m=[32m"true"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mid[39m=[32m"paste-tab"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "上传 Markdown":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"upload-panel"[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mid[39m=[32m"upload-tab"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "导入岗位链接":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"url-panel"[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mid[39m=[32m"url-tab"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tabpanel:
+
+  Name "粘贴岗位描述":
+  [36m<div[39m
+    [33maria-labelledby[39m=[32m"paste-tab"[39m
+    [33mid[39m=[32m"paste-panel"[39m
+    [33mrole[39m=[32m"tabpanel"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "岗位描述":
+  [36m<textarea[39m
+    [33mid[39m=[32m"job-description"[39m
+    [33mplaceholder[39m=[32m"粘贴你已查看的岗位描述"[39m
+    [33mrequired[39m=[32m""[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "导入岗位":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target job-import-submit"[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"job-import-live"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main job-import-workbench"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-import-title"[39m
+        [33mclass[39m=[32m"workbench-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m岗位机会 · 主动导入[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"job-import-title"[39m
+        [36m>[39m
+          [0m导入岗位[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m提交岗位描述或 Markdown 文件后，系统会保留原始证据，并将可确认的信息规范化为岗位机会。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-import-form-title"[39m
+        [33mclass[39m=[32m"job-import-panel"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"job-import-form-title"[39m
+        [36m>[39m
+          [0m添加岗位内容[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"导入方式"[39m
+          [33mclass[39m=[32m"job-import-tabs"[39m
+          [33mrole[39m=[32m"tablist"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-controls[39m=[32m"paste-panel"[39m
+            [33maria-selected[39m=[32m"true"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mid[39m=[32m"paste-tab"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtabindex[39m=[32m"0"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m粘贴岗位描述[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-controls[39m=[32m"upload-panel"[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mid[39m=[32m"upload-tab"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtabindex[39m=[32m"-1"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m上传 Markdown[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-controls[39m=[32m"url-panel"[39m
+            [33maria-selected[39m=[32m"false"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mid[39m=[32m"url-tab"[39m
+            [33mrole[39m=[32m"tab"[39m
+            [33mtabindex[39m=[32m"-1"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m导入岗位链接[0m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<form>[39m
+          [36m<div[39m
+            [33maria-labelledby[39m=[32m"paste-tab"[39m
+            [33mid[39m=[32m"paste-panel"[39m
+            [33mrole[39m=[32m"tabpanel"[39m
+          [36m>[39m
+            [36m<label[39m
+              [33mfor[39m=[32m"job-description"[39m
+            [36m>[39m
+              [0m岗位描述[0m
+            [36m</label>[39m
+            [36m<textarea[39m
+              [33mid[39m=[32m"job-description"[39m
+              [33mplaceholder[39m=[32m"粘贴你已查看的岗位描述"[39m
+              [33mrequired[39m=[32m""[39m
+            [36m/>[39m
+          [36m</div>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target job-import-submit"[39m
+            [33mtype[39m=[32m"submit"[39m
+          [36m>[39m
+            [0m导入岗位[0m
+          [36m</button>[39m
+        [36m</form>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"job-import-live"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m尚未导入岗位。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"job-import-columns"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"recent-job-imports-title"[39m
+          [33mclass[39m=[32m"job-import-panel"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"recent-job-imports-title"[39m
+          [36m>[39m
+            [0m最近导入[0m
+          [36m</h2>[39m
+          [36m<p>[39m
+            [0m尚无岗位导入记录。[0m
+          [36m</p>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"opportunity-title"[39m
+          [33mclass[39m=[32m"job-import-panel"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"opportunity-title"[39m
+          [36m>[39m
+            [0m规范化岗位机会[0m
+          [36m</h2>[39m
+          [36m<dl[39m
+            [33mclass[39m=[32m"job-import-opportunity"[39m
+          [36m>[39m
+            [36m<div>[39m
+              [36m<dt>[39m
+                [0m公司[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m未知[0m
+              [36m</dd>[39m
+            [36m</div>[39m
+            [36m<div>[39m
+              [36m<dt>[39m
+                [0m职位[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m未知[0m
+              [36m</dd>[39m
+            [36m</div>[39m
+            [36m<div>[39m
+              [36m<dt>[39m
+                [0m地点[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m未知[0m
+              [36m</dd>[39m
+            [36m</div>[39m
+            [36m<div>[39m
+              [36m<dt>[39m
+                [0m发布时间[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m未知[0m
+              [36m</dd>[39m
+            [36m</div>[39m
+            [36m<div>[39m
+              [36m<dt>[39m
+                [0m截止日期[0m
+              [36m</dt>[39m
+              [36m<dd>[39m
+                [0m未知[0m
+              [36m</dd>[39m
+            [36m</div>[39m
+          [36m</dl>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/job-import-view.test.tsx:26:17
+     24|   const user = userEvent.setup();
+     25|   render(<JobImportView initialImports={[]} />);
+     26|   expect(screen.getByRole("main", { name: "岗位导入" })).toBeVisible();
+       |                 ^
+     27|   expect(screen.getByRole("textbox", { name: "岗位描述" })).toBeVisible();
+     28|   await user.click(screen.getByRole("tab", { name: "上传 Markdown" }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  components/workbench/job-targets-view.test.tsx > prepopulates but never saves evidence-labelled candidate directions until the user submits the complete target form
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "求职目标"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container profile-main job-targets-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "确认你的求职目标":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-targets-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "候选岗位方向":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-target-suggestions-title"[39m
+    [33mclass[39m=[32m"job-targets-section"[39m
+  [36m/>[39m
+
+  Name "手动确认求职目标":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-target-form-title"[39m
+    [33mclass[39m=[32m"job-targets-section"[39m
+  [36m/>[39m
+
+  Name "已确认目标与历史":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-target-history-title"[39m
+    [33mclass[39m=[32m"job-targets-section"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"profile-next-step"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "确认你的求职目标":
+  [36m<h1[39m
+    [33mid[39m=[32m"job-targets-title"[39m
+  [36m/>[39m
+
+  Name "候选岗位方向":
+  [36m<h2[39m
+    [33mid[39m=[32m"job-target-suggestions-title"[39m
+  [36m/>[39m
+
+  Name "AI 应用工程":
+  [36m<h3 />[39m
+
+  Name "前端工程":
+  [36m<h3 />[39m
+
+  Name "全栈工程":
+  [36m<h3 />[39m
+
+  Name "手动确认求职目标":
+  [36m<h2[39m
+    [33mid[39m=[32m"job-target-form-title"[39m
+  [36m/>[39m
+
+  Name "已确认目标与历史":
+  [36m<h2[39m
+    [33mid[39m=[32m"job-target-history-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ol[39m
+    [33mclass[39m=[32m"job-target-suggestion-list"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  article:
+
+  Name "":
+  [36m<article />[39m
+
+  Name "":
+  [36m<article />[39m
+
+  Name "":
+  [36m<article />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "使用 AI 应用工程 建议":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "使用 前端工程 建议":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "使用 全栈工程 建议":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "保存主目标":
+  [36m<button[39m
+    [33mclass[39m=[32m"profile-upload-button workbench-touch-target"[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  group:
+
+  Name "目标优先级":
+  [36m<fieldset />[39m
+
+  Name "不可接受条件":
+  [36m<fieldset />[39m
+
+  --------------------------------------------------
+  radio:
+
+  Name "主目标":
+  [36m<input[39m
+    [33mchecked[39m=[32m""[39m
+    [33mname[39m=[32m"priority"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"primary"[39m
+  [36m/>[39m
+
+  Name "次目标":
+  [36m<input[39m
+    [33mname[39m=[32m"priority"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"secondary"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "目标岗位方向":
+  [36m<input[39m
+    [33mrequired[39m=[32m""[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "资历级别":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "意向地点（用逗号分隔）":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "意向行业（用逗号分隔）":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "不接受的公司（用逗号分隔）":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "不接受的行业（用逗号分隔）":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "其他不可接受条件（用逗号分隔）":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listbox:
+
+  Name "工作方式":
+  [36m<select[39m
+    [33maria-label[39m=[32m"工作方式"[39m
+    [33mmultiple[39m=[32m""[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  option:
+
+  Name "线下办公":
+  [36m<option[39m
+    [33mvalue[39m=[32m"onsite"[39m
+  [36m/>[39m
+
+  Name "混合办公":
+  [36m<option[39m
+    [33mvalue[39m=[32m"hybrid"[39m
+  [36m/>[39m
+
+  Name "远程办公":
+  [36m<option[39m
+    [33mvalue[39m=[32m"remote"[39m
+  [36m/>[39m
+
+  Name "暂不确定":
+  [36m<option[39m
+    [33mvalue[39m=[32m"unknown"[39m
+  [36m/>[39m
+
+  Name "不接受":
+  [36m<option[39m
+    [33mvalue[39m=[32m"not_willing"[39m
+  [36m/>[39m
+
+  Name "接受":
+  [36m<option[39m
+    [33mvalue[39m=[32m"willing"[39m
+  [36m/>[39m
+
+  Name "视条件而定":
+  [36m<option[39m
+    [33mvalue[39m=[32m"conditional"[39m
+  [36m/>[39m
+
+  Name "月":
+  [36m<option[39m
+    [33mvalue[39m=[32m"month"[39m
+  [36m/>[39m
+
+  Name "年":
+  [36m<option[39m
+    [33mvalue[39m=[32m"year"[39m
+  [36m/>[39m
+
+  Name "CNY":
+  [36m<option[39m
+    [33mvalue[39m=[32m"CNY"[39m
+  [36m/>[39m
+
+  Name "USD":
+  [36m<option[39m
+    [33mvalue[39m=[32m"USD"[39m
+  [36m/>[39m
+
+  Name "HKD":
+  [36m<option[39m
+    [33mvalue[39m=[32m"HKD"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  combobox:
+
+  Name "是否接受搬迁":
+  [36m<select />[39m
+
+  Name "薪资周期":
+  [36m<select />[39m
+
+  Name "薪资币种":
+  [36m<select />[39m
+
+  --------------------------------------------------
+  spinbutton:
+
+  Name "最低薪资":
+  [36m<input[39m
+    [33minputmode[39m=[32m"numeric"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  Name "最高薪资":
+  [36m<input[39m
+    [33minputmode[39m=[32m"numeric"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  checkbox:
+
+  Name "不接受外包":
+  [36m<input[39m
+    [33mtype[39m=[32m"checkbox"[39m
+  [36m/>[39m
+
+  Name "不接受派遣":
+  [36m<input[39m
+    [33mtype[39m=[32m"checkbox"[39m
+  [36m/>[39m
+
+  Name "不接受猎头":
+  [36m<input[39m
+    [33mtype[39m=[32m"checkbox"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container profile-main job-targets-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-targets-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m求职画像 · 目标确认[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"job-targets-title"[39m
+        [36m>[39m
+          [0m确认你的求职目标[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m设置一个主目标与最多两个次目标；系统会据此筛选岗位机会，但不会代表你执行外部行动。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-target-suggestions-title"[39m
+        [33mclass[39m=[32m"job-targets-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"job-target-suggestions-title"[39m
+        [36m>[39m
+          [0m候选岗位方向[0m
+        [36m</h2>[39m
+        [36m<p>[39m
+          [0m候选岗位方向只会预填表单。请核对建议依据并手动确认后再保存。[0m
+        [36m</p>[39m
+        [36m<ol[39m
+          [33mclass[39m=[32m"job-target-suggestion-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<article>[39m
+              [36m<h3>[39m
+                [0mAI 应用工程[0m
+              [36m</h3>[39m
+              [36m<p>[39m
+                [0m与已确认的 AI 应用工程 经历和技能一致[0m
+              [36m</p>[39m
+              [36m<strong>[39m
+                [0m建议依据[0m
+              [36m</strong>[39m
+              [36m<ul>[39m
+                [36m<li>[39m
+                  [0mAI 应用工程 证据[0m
+                [36m</li>[39m
+              [36m</ul>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m使用 [0m
+                [0mAI 应用工程[0m
+                [0m 建议[0m
+              [36m</button>[39m
+            [36m</article>[39m
+          [36m</li>[39m
+          [36m<li>[39m
+            [36m<article>[39m
+              [36m<h3>[39m
+                [0m前端工程[0m
+              [36m</h3>[39m
+              [36m<p>[39m
+                [0m与已确认的 前端工程 经历和技能一致[0m
+              [36m</p>[39m
+              [36m<strong>[39m
+                [0m建议依据[0m
+              [36m</strong>[39m
+              [36m<ul>[39m
+                [36m<li>[39m
+                  [0m前端工程 证据[0m
+                [36m</li>[39m
+              [36m</ul>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m使用 [0m
+                [0m前端工程[0m
+                [0m 建议[0m
+              [36m</button>[39m
+            [36m</article>[39m
+          [36m</li>[39m
+          [36m<li>[39m
+            [36m<article>[39m
+              [36m<h3>[39m
+                [0m全栈工程[0m
+              [36m</h3>[39m
+              [36m<p>[39m
+                [0m与已确认的 全栈工程 经历和技能一致[0m
+              [36m</p>[39m
+              [36m<strong>[39m
+                [0m建议依据[0m
+              [36m</strong>[39m
+              [36m<ul>[39m
+                [36m<li>[39m
+                  [0m全栈工程 证据[0m
+                [36m</li>[39m
+              [36m</ul>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m使用 [0m
+                [0m全栈工程[0m
+                [0m 建议[0m
+              [36m</button>[39m
+            [36m</article>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-target-form-title"[39m
+        [33mclass[39m=[32m"job-targets-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"job-target-form-title"[39m
+        [36m>[39m
+          [0m手动确认求职目标[0m
+        [36m</h2>[39m
+        [36m<form[39m
+          [33mclass[39m=[32m"job-target-form"[39m
+        [36m>[39m
+          [36m<fieldset>[39m
+            [36m<legend>[39m
+              [0m目标优先级[0m
+            [36m</legend>[39m
+            [36m<label>[39m
+              [36m<input[39m
+                [33mchecked[39m=[32m""[39m
+                [33mname[39m=[32m"priority"[39m
+                [33mtype[39m=[32m"radio"[39m
+                [33mvalue[39m=[32m"primary"[39m
+              [36m/>[39m
+              [0m 主目标[0m
+            [36m</label>[39m
+            [36m<label>[39m
+              [36m<input[39m
+                [33mname[39m=[32m"priority"[39m
+                [33mtype[39m=[32m"radio"[39m
+                [33mvalue[39m=[32m"secondary"[39m
+              [36m/>[39m
+              [0m 次目标[0m
+            [36m</label>[39m
+          [36m</fieldset>[39m
+          [36m<label>[39m
+            [0m目标岗位方向[0m
+            [36m<input[39m
+              [33mrequired[39m=[32m""[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m资历级别[0m
+            [36m<input[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m意向地点（用逗号分隔）[0m
+            [36m<input[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m工作方式[0m
+            [36m<select[39m
+              [33maria-label[39m=[32m"工作方式"[39m
+              [33mmultiple[39m=[32m""[39m
+            [36m>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"onsite"[39m
+              [36m>[39m
+                [0m线下办公[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"hybrid"[39m
+              [36m>[39m
+                [0m混合办公[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"remote"[39m
+              [36m>[39m
+                [0m远程办公[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m是否接受搬迁[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"unknown"[39m
+              [36m>[39m
+                [0m暂不确定[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"not_willing"[39m
+              [36m>[39m
+                [0m不接受[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"willing"[39m
+              [36m>[39m
+                [0m接受[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"conditional"[39m
+              [36m>[39m
+                [0m视条件而定[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"job-target-salary-fields"[39m
+          [36m>[39m
+            [36m<label>[39m
+              [0m最低薪资[0m
+              [36m<input[39m
+                [33minputmode[39m=[32m"numeric"[39m
+                [33mmin[39m=[32m"0"[39m
+                [33mtype[39m=[32m"number"[39m
+                [33mvalue[39m=[32m""[39m
+              [36m/>[39m
+            [36m</label>[39m
+            [36m<label>[39m
+              [0m最高薪资[0m
+              [36m<input[39m
+                [33minputmode[39m=[32m"numeric"[39m
+                [33mmin[39m=[32m"0"[39m
+                [33mtype[39m=[32m"number"[39m
+                [33mvalue[39m=[32m""[39m
+              [36m/>[39m
+            [36m</label>[39m
+            [36m<label>[39m
+              [0m薪资周期[0m
+              [36m<select>[39m
+                [36m<option[39m
+                  [33mvalue[39m=[32m"month"[39m
+                [36m>[39m
+                  [0m月[0m
+                [36m</option>[39m
+                [36m<option[39m
+                  [33mvalue[39m=[32m"year"[39m
+                [36m>[39m
+                  [0m年[0m
+                [36m</option>[39m
+              [36m</select>[39m
+            [36m</label>[39m
+            [36m<label>[39m
+              [0m薪资币种[0m
+              [36m<select>[39m
+                [36m<option[39m
+                  [33mvalue[39m=[32m"CNY"[39m
+                [36m>[39m
+                  [0mCNY[0m
+                [36m</option>[39m
+                [36m<option[39m
+                  [33mvalue[39m=[32m"USD"[39m
+                [36m>[39m
+                  [0mUSD[0m
+                [36m</option>[39m
+                [36m<option[39m
+                  [33mvalue[39m=[32m"HKD"[39m
+                [36m>[39m
+                  [0mHKD[0m
+                [36m</option>[39m
+              [36m</select>[39m
+            [36m</label>[39m
+          [36m</div>[39m
+          [36m<label>[39m
+            [0m意向行业（用逗号分隔）[0m
+            [36m<input[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<fieldset>[39m
+            [36m<legend>[39m
+              [0m不可接受条件[0m
+            [36m</legend>[39m
+            [36m<label>[39m
+              [0m不接受的公司（用逗号分隔）[0m
+              [36m<input[39m
+                [33mvalue[39m=[32m""[39m
+              [36m/>[39m
+            [36m</label>[39m
+            [36m<label>[39m
+              [0m不接受的行业（用逗号分隔）[0m
+              [36m<input[39m
+                [33mvalue[39m=[32m""[39m
+              [36m/>[39m
+            [36m</label>[39m
+            [36m<label>[39m
+              [36m<input[39m
+                [33mtype[39m=[32m"checkbox"[39m
+              [36m/>[39m
+              [0m 不接受外包[0m
+            [36m</label>[39m
+            [36m<label>[39m
+              [36m<input[39m
+                [33mtype[39m=[32m"checkbox"[39m
+              [36m/>[39m
+              [0m 不接受派遣[0m
+            [36m</label>[39m
+            [36m<label>[39m
+              [36m<input[39m
+                [33mtype[39m=[32m"checkbox"[39m
+              [36m/>[39m
+              [0m 不接受猎头[0m
+            [36m</label>[39m
+            [36m<label>[39m
+              [0m其他不可接受条件（用逗号分隔）[0m
+              [36m<input[39m
+                [33mvalue[39m=[32m""[39m
+              [36m/>[39m
+            [36m</label>[39m
+          [36m</fieldset>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"profile-upload-button workbench-touch-target"[39m
+            [33mtype[39m=[32m"submit"[39m
+          [36m>[39m
+            [0m保存主目标[0m
+          [36m</button>[39m
+        [36m</form>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-target-history-title"[39m
+        [33mclass[39m=[32m"job-targets-section"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"job-target-history-title"[39m
+        [36m>[39m
+          [0m已确认目标与历史[0m
+        [36m</h2>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚未保存求职目标。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/job-targets-view.test.tsx:62:17
+     60|   render(<JobTargetsView initialOverview={overview()} />);
+     61|
+     62|   expect(screen.getByRole("main", { name: "求职目标" })).toBeVisible();
+       |                 ^
+     63|   expect(screen.getByRole("heading", { name: "候选岗位方向" })).toBeVisible(…
+     64|   expect(screen.getAllByText("建议依据")).toHaveLength(3);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  components/workbench/model-connection-view.test.tsx > 用文字、标题和实时区域展示 { status: 'unverified', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_CONFIGURATION_MISSING', reasonSummary: '尚未完成模型连接检查', impact: '当前无法确认模型功能是否可用。', suggestedActions: [ '请运行模型连接检查。' ], checkedAt: null, latencyBucket: null, retryAt: null } 状态
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "模型诊断"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "模型连接":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "尚未完成模型连接检查":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+    [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+    [33mclass[39m=[32m"model-connection-checks"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+    [33mclass[39m=[32m"model-connection-actions"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "模型连接":
+  [36m<h1[39m
+    [33mid[39m=[32m"model-connection-title"[39m
+  [36m/>[39m
+
+  Name "尚未完成模型连接检查":
+  [36m<h2[39m
+    [33mid[39m=[32m"model-connection-status-title"[39m
+    [33mtitle[39m=[32m"尚未完成模型连接检查"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-checks-title"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-actions-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"model-connection-live"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ul />[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "身份验证：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"身份验证：未确认"[39m
+  [36m/>[39m
+
+  Name "模型可用性：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"模型可用性：未确认"[39m
+  [36m/>[39m
+
+  Name "结构化输出：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"结构化输出：未确认"[39m
+  [36m/>[39m
+
+  Name "响应时限：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"响应时限：未确认"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "检查模型连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"model-connection-title"[39m
+        [36m>[39m
+          [0m模型连接[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+        [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"model-connection-status-title"[39m
+            [33mtitle[39m=[32m"尚未完成模型连接检查"[39m
+          [36m>[39m
+            [0m尚未完成模型连接检查[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"model-connection-live"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m尚未完成模型连接检查[0m
+        [36m</p>[39m
+        [36m<dl[39m
+          [33mclass[39m=[32m"model-connection-details"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m原因[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m尚未完成模型连接检查[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m影响[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m当前无法确认模型功能是否可用。[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m上次检查[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m尚未检查[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m响应速度[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m尚未检查[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+        [36m</dl>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+          [33mclass[39m=[32m"model-connection-checks"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-checks-title"[39m
+          [36m>[39m
+            [0m检查项目[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m身份验证[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"身份验证：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m模型可用性[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"模型可用性：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m结构化输出[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"结构化输出：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m响应时限[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"响应时限：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+          [33mclass[39m=[32m"model-connection-actions"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-actions-title"[39m
+          [36m>[39m
+            [0m建议[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [0m请运行模型连接检查。[0m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+          [33mdata-slot[39m=[32m"button"[39m
+          [33mtabindex[39m=[32m"0"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0m检查模型连接[0m
+        [36m</button>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/model-connection-view.test.tsx:21:17
+     19| ] as const)("用文字、标题和实时区域展示 %s 状态", (initial, title) => {
+     20|   render(<ModelConnectionView initialDiagnostics={initial} />);
+     21|   expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
+       |                 ^
+     22|   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocum…
+     23|   expect(screen.getByRole("status")).toHaveTextContent(title);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  components/workbench/model-connection-view.test.tsx > 用文字、标题和实时区域展示 { status: 'checking', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_CONFIGURATION_MISSING', reasonSummary: '模型连接正在检查', impact: '当前无法确认模型功能是否可用。', suggestedActions: [ '请稍后刷新。' ], checkedAt: null, latencyBucket: null, retryAt: null } 状态
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "模型诊断"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "模型连接":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "模型连接正在检查":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+    [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+    [33mclass[39m=[32m"model-connection-checks"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+    [33mclass[39m=[32m"model-connection-actions"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "模型连接":
+  [36m<h1[39m
+    [33mid[39m=[32m"model-connection-title"[39m
+  [36m/>[39m
+
+  Name "模型连接正在检查":
+  [36m<h2[39m
+    [33mid[39m=[32m"model-connection-status-title"[39m
+    [33mtitle[39m=[32m"模型连接正在检查"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-checks-title"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-actions-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"model-connection-live"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ul />[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "身份验证：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"身份验证：未确认"[39m
+  [36m/>[39m
+
+  Name "模型可用性：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"模型可用性：未确认"[39m
+  [36m/>[39m
+
+  Name "结构化输出：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"结构化输出：未确认"[39m
+  [36m/>[39m
+
+  Name "响应时限：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"响应时限：未确认"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "检查模型连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"model-connection-title"[39m
+        [36m>[39m
+          [0m模型连接[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+        [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"model-connection-status-title"[39m
+            [33mtitle[39m=[32m"模型连接正在检查"[39m
+          [36m>[39m
+            [0m模型连接正在检查[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"model-connection-live"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m模型连接正在检查[0m
+        [36m</p>[39m
+        [36m<dl[39m
+          [33mclass[39m=[32m"model-connection-details"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m原因[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型连接正在检查[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m影响[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m当前无法确认模型功能是否可用。[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m上次检查[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m尚未检查[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m响应速度[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m尚未检查[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+        [36m</dl>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+          [33mclass[39m=[32m"model-connection-checks"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-checks-title"[39m
+          [36m>[39m
+            [0m检查项目[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m身份验证[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"身份验证：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m模型可用性[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"模型可用性：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m结构化输出[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"结构化输出：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m响应时限[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"响应时限：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+          [33mclass[39m=[32m"model-connection-actions"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-actions-title"[39m
+          [36m>[39m
+            [0m建议[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [0m请稍后刷新。[0m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+          [33mdata-slot[39m=[32m"button"[39m
+          [33mtabindex[39m=[32m"0"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0m检查模型连接[0m
+        [36m</button>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/model-connection-view.test.tsx:21:17
+     19| ] as const)("用文字、标题和实时区域展示 %s 状态", (initial, title) => {
+     20|   render(<ModelConnectionView initialDiagnostics={initial} />);
+     21|   expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
+       |                 ^
+     22|   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocum…
+     23|   expect(screen.getByRole("status")).toHaveTextContent(title);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  components/workbench/model-connection-view.test.tsx > 用文字、标题和实时区域展示 { status: 'available', checks: { authentication: 'passed', modelAvailability: 'passed', structuredOutput: 'passed', timeout: 'passed' }, reasonCode: 'MODEL_DIAGNOSTIC_AVAILABLE', reasonSummary: '模型连接正常', impact: '模型功能可用。', suggestedActions: [], checkedAt: '2026-09-05T00:00:00.000Z', latencyBucket: 'under_1s', retryAt: null } 状态
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "模型诊断"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "模型连接":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "模型连接正常":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+    [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+    [33mclass[39m=[32m"model-connection-checks"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "模型连接":
+  [36m<h1[39m
+    [33mid[39m=[32m"model-connection-title"[39m
+  [36m/>[39m
+
+  Name "模型连接正常":
+  [36m<h2[39m
+    [33mid[39m=[32m"model-connection-status-title"[39m
+    [33mtitle[39m=[32m"模型连接正常"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-checks-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"model-connection-live"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "身份验证：通过":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"身份验证：通过"[39m
+  [36m/>[39m
+
+  Name "模型可用性：通过":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"模型可用性：通过"[39m
+  [36m/>[39m
+
+  Name "结构化输出：通过":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"结构化输出：通过"[39m
+  [36m/>[39m
+
+  Name "响应时限：通过":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"响应时限：通过"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "检查模型连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"model-connection-title"[39m
+        [36m>[39m
+          [0m模型连接[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+        [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"model-connection-status-title"[39m
+            [33mtitle[39m=[32m"模型连接正常"[39m
+          [36m>[39m
+            [0m模型连接正常[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"model-connection-live"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m模型连接正常[0m
+        [36m</p>[39m
+        [36m<dl[39m
+          [33mclass[39m=[32m"model-connection-details"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m原因[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型连接正常[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m影响[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型功能可用。[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m上次检查[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m2026年9月5日 08:00[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m响应速度[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m1 秒内[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+        [36m</dl>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+          [33mclass[39m=[32m"model-connection-checks"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-checks-title"[39m
+          [36m>[39m
+            [0m检查项目[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m身份验证[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"身份验证：通过"[39m
+              [36m>[39m
+                [0m通过[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m模型可用性[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"模型可用性：通过"[39m
+              [36m>[39m
+                [0m通过[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m结构化输出[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"结构化输出：通过"[39m
+              [36m>[39m
+                [0m通过[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m响应时限[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"响应时限：通过"[39m
+              [36m>[39m
+                [0m通过[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+          [33mdata-slot[39m=[32m"button"[39m
+          [33mtabindex[39m=[32m"0"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0m检查模型连接[0m
+        [36m</button>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/model-connection-view.test.tsx:21:17
+     19| ] as const)("用文字、标题和实时区域展示 %s 状态", (initial, title) => {
+     20|   render(<ModelConnectionView initialDiagnostics={initial} />);
+     21|   expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
+       |                 ^
+     22|   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocum…
+     23|   expect(screen.getByRole("status")).toHaveTextContent(title);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  components/workbench/model-connection-view.test.tsx > 用文字、标题和实时区域展示 { status: 'failed', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED', reasonSummary: '模型服务认证失败', impact: '模型功能暂不可用。', suggestedActions: [ '请联系部署管理员检查服务凭据。' ], checkedAt: '2026-09-05T00:00:00.000Z', latencyBucket: 'under_1s', retryAt: '2099-09-05T00:01:00.000Z' } 状态
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "模型诊断"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "模型连接":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "模型连接检查失败":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+    [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+    [33mclass[39m=[32m"model-connection-checks"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+    [33mclass[39m=[32m"model-connection-actions"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "模型连接":
+  [36m<h1[39m
+    [33mid[39m=[32m"model-connection-title"[39m
+  [36m/>[39m
+
+  Name "模型连接检查失败":
+  [36m<h2[39m
+    [33mid[39m=[32m"model-connection-status-title"[39m
+    [33mtitle[39m=[32m"模型连接检查失败"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-checks-title"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-actions-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"model-connection-retry"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"model-connection-live"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ul />[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "身份验证：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"身份验证：未确认"[39m
+  [36m/>[39m
+
+  Name "模型可用性：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"模型可用性：未确认"[39m
+  [36m/>[39m
+
+  Name "结构化输出：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"结构化输出：未确认"[39m
+  [36m/>[39m
+
+  Name "响应时限：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"响应时限：未确认"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "检查模型连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-disabled[39m=[32m""[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"model-connection-title"[39m
+        [36m>[39m
+          [0m模型连接[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+        [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"model-connection-status-title"[39m
+            [33mtitle[39m=[32m"模型连接检查失败"[39m
+          [36m>[39m
+            [0m模型连接检查失败[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"model-connection-live"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m模型服务认证失败[0m
+        [36m</p>[39m
+        [36m<dl[39m
+          [33mclass[39m=[32m"model-connection-details"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m原因[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型服务认证失败[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m影响[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型功能暂不可用。[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m上次检查[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m2026年9月5日 08:00[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m响应速度[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m1 秒内[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+        [36m</dl>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+          [33mclass[39m=[32m"model-connection-checks"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-checks-title"[39m
+          [36m>[39m
+            [0m检查项目[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m身份验证[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"身份验证：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m模型可用性[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"模型可用性：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m结构化输出[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"结构化输出：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m响应时限[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"响应时限：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+          [33mclass[39m=[32m"model-connection-actions"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-actions-title"[39m
+          [36m>[39m
+            [0m建议[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [0m请联系部署管理员检查服务凭据。[0m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"model-connection-retry"[39m
+        [36m>[39m
+          [0m可在 [0m
+          [0m2099年9月5日 08:01[0m
+          [0m 后重试。[0m
+        [36m</p>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+          [33mdata-disabled[39m=[32m""[39m
+          [33mdata-slot[39m=[32m"button"[39m
+          [33mdisabled[39m=[32m""[39m
+          [33mtabindex[39m=[32m"0"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0m检查模型连接[0m
+        [36m</button>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/model-connection-view.test.tsx:21:17
+     19| ] as const)("用文字、标题和实时区域展示 %s 状态", (initial, title) => {
+     20|   render(<ModelConnectionView initialDiagnostics={initial} />);
+     21|   expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
+       |                 ^
+     22|   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocum…
+     23|   expect(screen.getByRole("status")).toHaveTextContent(title);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+ FAIL  components/workbench/model-connection-view.test.tsx > 用文字、标题和实时区域展示 { status: 'temporarily_unavailable', checks: { authentication: 'not_verified', modelAvailability: 'not_verified', structuredOutput: 'not_verified', timeout: 'not_verified' }, reasonCode: 'MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE', reasonSummary: '模型服务暂不可用', impact: '模型功能暂时不可用。', suggestedActions: [ '请稍后重试。' ], checkedAt: '2026-09-05T00:00:00.000Z', latencyBucket: '5_to_10s', retryAt: null } 状态
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "模型诊断"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "模型连接":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "模型连接暂不可用":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+    [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+    [33mclass[39m=[32m"model-connection-checks"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+    [33mclass[39m=[32m"model-connection-actions"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "模型连接":
+  [36m<h1[39m
+    [33mid[39m=[32m"model-connection-title"[39m
+  [36m/>[39m
+
+  Name "模型连接暂不可用":
+  [36m<h2[39m
+    [33mid[39m=[32m"model-connection-status-title"[39m
+    [33mtitle[39m=[32m"模型连接暂不可用"[39m
+  [36m/>[39m
+
+  Name "检查项目":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-checks-title"[39m
+  [36m/>[39m
+
+  Name "建议":
+  [36m<h3[39m
+    [33mid[39m=[32m"model-connection-actions-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"model-connection-live"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ul />[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "身份验证：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"身份验证：未确认"[39m
+  [36m/>[39m
+
+  Name "模型可用性：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"模型可用性：未确认"[39m
+  [36m/>[39m
+
+  Name "结构化输出：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"结构化输出：未确认"[39m
+  [36m/>[39m
+
+  Name "响应时限：未确认":
+  [36m<strong[39m
+    [33mtitle[39m=[32m"响应时限：未确认"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "检查模型连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main model-connection-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"model-connection-title"[39m
+        [36m>[39m
+          [0m模型连接[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"model-connection-status-title"[39m
+        [33mclass[39m=[32m"workbench-ledger model-connection-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"model-connection-status-title"[39m
+            [33mtitle[39m=[32m"模型连接暂不可用"[39m
+          [36m>[39m
+            [0m模型连接暂不可用[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"model-connection-live"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m模型服务暂不可用[0m
+        [36m</p>[39m
+        [36m<dl[39m
+          [33mclass[39m=[32m"model-connection-details"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m原因[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型服务暂不可用[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m影响[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m模型功能暂时不可用。[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m上次检查[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m2026年9月5日 08:00[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+          [36m<div>[39m
+            [36m<dt>[39m
+              [0m响应速度[0m
+            [36m</dt>[39m
+            [36m<dd>[39m
+              [0m5–10 秒[0m
+            [36m</dd>[39m
+          [36m</div>[39m
+        [36m</dl>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-checks-title"[39m
+          [33mclass[39m=[32m"model-connection-checks"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-checks-title"[39m
+          [36m>[39m
+            [0m检查项目[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m身份验证[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"身份验证：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m模型可用性[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"模型可用性：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m结构化输出[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"结构化输出：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+            [36m<li>[39m
+              [36m<span>[39m
+                [0m响应时限[0m
+              [36m</span>[39m
+              [36m<strong[39m
+                [33mtitle[39m=[32m"响应时限：未确认"[39m
+              [36m>[39m
+                [0m未确认[0m
+              [36m</strong>[39m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"model-connection-actions-title"[39m
+          [33mclass[39m=[32m"model-connection-actions"[39m
+        [36m>[39m
+          [36m<h3[39m
+            [33mid[39m=[32m"model-connection-actions-title"[39m
+          [36m>[39m
+            [0m建议[0m
+          [36m</h3>[39m
+          [36m<ul>[39m
+            [36m<li>[39m
+              [0m请稍后重试。[0m
+            [36m</li>[39m
+          [36m</ul>[39m
+        [36m</section>[39m
+        [36m<button[39m
+          [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+          [33mdata-slot[39m=[32m"button"[39m
+          [33mtabindex[39m=[32m"0"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0m检查模型连接[0m
+        [36m</button>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/model-connection-view.test.tsx:21:17
+     19| ] as const)("用文字、标题和实时区域展示 %s 状态", (initial, title) => {
+     20|   render(<ModelConnectionView initialDiagnostics={initial} />);
+     21|   expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
+       |                 ^
+     22|   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocum…
+     23|   expect(screen.getByRole("status")).toHaveTextContent(title);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > links from trusted profile facts to confirmation of job targets
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "职业资料"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container profile-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "从职业资料建立求职画像":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"profile-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "导入职业资料":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+    [33mclass[39m=[32m"profile-upload"[39m
+  [36m/>[39m
+
+  Name "当前可信画像":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"trusted-profile-title"[39m
+    [33mclass[39m=[32m"profile-facts"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"profile-pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "从职业资料建立求职画像":
+  [36m<h1[39m
+    [33mid[39m=[32m"profile-title"[39m
+  [36m/>[39m
+
+  Name "导入职业资料":
+  [36m<h2[39m
+    [33mid[39m=[32m"profile-upload-title"[39m
+  [36m/>[39m
+
+  Name "当前可信画像":
+  [36m<h2[39m
+    [33mid[39m=[32m"trusted-profile-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "管理账户运行策略":
+  [36m<a[39m
+    [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile/run-policy"[39m
+  [36m/>[39m
+
+  Name "确认求职目标":
+  [36m<a[39m
+    [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile/targets"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  note:
+
+  Name "":
+  [36m<div[39m
+    [33mclass[39m=[32m"profile-privacy-reminder"[39m
+    [33mrole[39m=[32m"note"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "上传并解析":
+  [36m<button[39m
+    [33mclass[39m=[32m"profile-upload-button workbench-touch-target"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  Name "新增画像事实":
+  [36m<button[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  Name "修改 技能":
+  [36m<button[39m
+    [33maria-label[39m=[32m"修改 技能"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "移除 技能":
+  [36m<button[39m
+    [33maria-label[39m=[32m"移除 技能"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"profile-status"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  combobox:
+
+  Name "画像事实类型":
+  [36m<select />[39m
+
+  --------------------------------------------------
+  option:
+
+  Name "工作经历":
+  [36m<option[39m
+    [33mvalue[39m=[32m"experience"[39m
+  [36m/>[39m
+
+  Name "教育经历":
+  [36m<option[39m
+    [33mvalue[39m=[32m"education"[39m
+  [36m/>[39m
+
+  Name "技能":
+  [36m<option[39m
+    [33mvalue[39m=[32m"skill"[39m
+  [36m/>[39m
+
+  Name "项目经历":
+  [36m<option[39m
+    [33mvalue[39m=[32m"project"[39m
+  [36m/>[39m
+
+  Name "语言":
+  [36m<option[39m
+    [33mvalue[39m=[32m"language"[39m
+  [36m/>[39m
+
+  Name "成果":
+  [36m<option[39m
+    [33mvalue[39m=[32m"achievement"[39m
+  [36m/>[39m
+
+  Name "证书":
+  [36m<option[39m
+    [33mvalue[39m=[32m"certification"[39m
+  [36m/>[39m
+
+  Name "工作资格":
+  [36m<option[39m
+    [33mvalue[39m=[32m"work_eligibility"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "画像事实内容":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ol[39m
+    [33mclass[39m=[32m"profile-fact-list"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-privacy-reminder"[39m
+          [33mrole[39m=[32m"note"[39m
+        [36m>[39m
+          [36m<strong>[39m
+            [0m上传前先检查隐私[0m
+          [36m</strong>[39m
+          [36m<p>[39m
+            [0m请检查姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号。自动检查可能遗漏内容，请勿使用随机生成的真实身份替换。[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<form[39m
+          [33mclass[39m=[32m"profile-upload-form"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mfor[39m=[32m"career-document"[39m
+          [36m>[39m
+            [0m选择 Markdown、DOCX 或 PDF 职业资料[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33maccept[39m=[32m".md,.docx,.pdf,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"[39m
+            [33mclass[39m=[32m"profile-file-input"[39m
+            [33mid[39m=[32m"career-document"[39m
+            [33mname[39m=[32m"careerDocument"[39m
+            [33mtype[39m=[32m"file"[39m
+          [36m/>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"profile-upload-button workbench-touch-target"[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtype[39m=[32m"submit"[39m
+          [36m>[39m
+            [0m上传并解析[0m
+          [36m</button>[39m
+        [36m</form>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"trusted-profile-title"[39m
+        [33mclass[39m=[32m"profile-facts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m1[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/targets"[39m
+        [36m>[39m
+          [0m确认求职目标[0m
+        [36m</a>[39m
+        [36m<form[39m
+          [33mclass[39m=[32m"profile-fact-correction"[39m
+        [36m>[39m
+          [36m<label>[39m
+            [0m画像事实类型[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"experience"[39m
+              [36m>[39m
+                [0m工作经历[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"education"[39m
+              [36m>[39m
+                [0m教育经历[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"skill"[39m
+              [36m>[39m
+                [0m技能[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"project"[39m
+              [36m>[39m
+                [0m项目经历[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"language"[39m
+              [36m>[39m
+                [0m语言[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"achievement"[39m
+              [36m>[39m
+                [0m成果[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"certification"[39m
+              [36m>[39m
+                [0m证书[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"work_eligibility"[39m
+              [36m>[39m
+                [0m工作资格[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m画像事实内容[0m
+            [36m<input[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtype[39m=[32m"submit"[39m
+          [36m>[39m
+            [0m新增画像事实[0m
+          [36m</button>[39m
+        [36m</form>[39m
+        [36m<ol[39m
+          [33mclass[39m=[32m"profile-fact-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"profile-fact-value"[39m
+            [36m>[39m
+              [36m<p>[39m
+                [0m技能[0m
+              [36m</p>[39m
+              [36m<strong>[39m
+                [0mTypeScript[0m
+              [36m</strong>[39m
+              [36m<span>[39m
+                [0m由你确认[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"profile-fact-actions"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-label[39m=[32m"修改 技能"[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m修改[0m
+              [36m</button>[39m
+              [36m<button[39m
+                [33maria-label[39m=[32m"移除 技能"[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m移除[0m
+              [36m</button>[39m
+            [36m</div>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:152:17
+    150|   }} />);
+    151|
+    152|   expect(screen.getByRole("main", { name: "职业资料" })).toBeVisible();
+       |                 ^
+    153|   expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute…
+    154| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+
+ FAIL  components/workbench/workbench-home-view.test.tsx > 把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力
+TestingLibraryElementError: Unable to find an accessible element with the role "main" and name "今日决策台"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main[39m
+    [33mclass[39m=[32m"container workbench-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "先处理需要你决定的事项":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"workbench-home-title"[39m
+    [33mclass[39m=[32m"workbench-intro"[39m
+  [36m/>[39m
+
+  Name "首次推荐旅程暂时无法读取":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"first-recommendation-journey-unavailable-title"[39m
+    [33mclass[39m=[32m"workbench-ledger first-recommendation-journey-unavailable"[39m
+  [36m/>[39m
+
+  Name "需要你决定的事项":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"agent-inbox-title"[39m
+    [33mclass[39m=[32m"workbench-ledger agent-inbox-panel"[39m
+  [36m/>[39m
+
+  Name "开始今日完整推荐":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"recommendation-run-title"[39m
+    [33mclass[39m=[32m"workbench-ledger recommendation-run-panel"[39m
+    [33mid[39m=[32m"recommendation-run"[39m
+  [36m/>[39m
+
+  Name "先确认求职目标":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"agent-run-title"[39m
+    [33mclass[39m=[32m"workbench-ledger agent-run-panel"[39m
+  [36m/>[39m
+
+  Name "运行前检查":
+  [36m<section[39m
+    [33maria-label[39m=[32m"运行前检查"[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"run-preflight-panel"[39m
+  [36m/>[39m
+
+  Name "管理运行策略":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"run-policy-entry-title"[39m
+    [33mclass[39m=[32m"workbench-ledger"[39m
+  [36m/>[39m
+
+  Name "职业资料等待确认":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"ledger-title"[39m
+    [33mclass[39m=[32m"workbench-ledger"[39m
+  [36m/>[39m
+
+  Name "已有岗位描述？":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"job-import-entry-title"[39m
+    [33mclass[39m=[32m"workbench-ledger workbench-job-import-entry"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "先处理需要你决定的事项":
+  [36m<h1[39m
+    [33mid[39m=[32m"workbench-home-title"[39m
+  [36m/>[39m
+
+  Name "首次推荐旅程暂时无法读取":
+  [36m<h2[39m
+    [33mid[39m=[32m"first-recommendation-journey-unavailable-title"[39m
+  [36m/>[39m
+
+  Name "需要你决定的事项":
+  [36m<h2[39m
+    [33mid[39m=[32m"agent-inbox-title"[39m
+  [36m/>[39m
+
+  Name "开始今日完整推荐":
+  [36m<h2[39m
+    [33mid[39m=[32m"recommendation-run-title"[39m
+  [36m/>[39m
+
+  Name "发现岗位":
+  [36m<h3 />[39m
+
+  Name "资格筛选":
+  [36m<h3 />[39m
+
+  Name "初步排序":
+  [36m<h3 />[39m
+
+  Name "深度匹配":
+  [36m<h3 />[39m
+
+  Name "发布结果":
+  [36m<h3 />[39m
+
+  Name "先确认求职目标":
+  [36m<h2[39m
+    [33mid[39m=[32m"agent-run-title"[39m
+  [36m/>[39m
+
+  Name "运行前检查":
+  [36m<h3 />[39m
+
+  Name "告诉 Copilot 你在找什么":
+  [36m<h3 />[39m
+
+  Name "管理运行策略":
+  [36m<h2[39m
+    [33mid[39m=[32m"run-policy-entry-title"[39m
+  [36m/>[39m
+
+  Name "控制后台运行范围":
+  [36m<h3 />[39m
+
+  Name "检查模型连接":
+  [36m<h3 />[39m
+
+  Name "职业资料等待确认":
+  [36m<h2[39m
+    [33mid[39m=[32m"ledger-title"[39m
+  [36m/>[39m
+
+  Name "下一步":
+  [36m<h3 />[39m
+
+  Name "已有岗位描述？":
+  [36m<h2[39m
+    [33mid[39m=[32m"job-import-entry-title"[39m
+  [36m/>[39m
+
+  Name "导入一条岗位机会":
+  [36m<h3 />[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-summary-note"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"agent-inbox-empty"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-ledger-note"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  group:
+
+  Name "事项状态筛选":
+  [36m<div[39m
+    [33maria-label[39m=[32m"事项状态筛选"[39m
+    [33mclass[39m=[32m"agent-inbox-filters"[39m
+    [33mrole[39m=[32m"group"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "待处理":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"true"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "未读":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "已读":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "已处理":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "开始今日发现":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-disabled[39m=[32m""[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"agent-inbox-live is-empty"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"recommendation-run-live is-empty"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "完整推荐阶段":
+  [36m<ol[39m
+    [33maria-label[39m=[32m"完整推荐阶段"[39m
+    [33mclass[39m=[32m"recommendation-run-stages"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li[39m
+    [33mdata-status[39m=[32m"pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<li[39m
+    [33mdata-status[39m=[32m"pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<li[39m
+    [33mdata-status[39m=[32m"pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<li[39m
+    [33mdata-status[39m=[32m"pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<li[39m
+    [33mdata-status[39m=[32m"pending"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "确认求职目标":
+  [36m<a[39m
+    [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile/targets"[39m
+  [36m/>[39m
+
+  Name "管理运行策略":
+  [36m<a[39m
+    [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile/run-policy"[39m
+  [36m/>[39m
+
+  Name "检查模型连接":
+  [36m<a[39m
+    [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile/model-connection"[39m
+  [36m/>[39m
+
+  Name "查看待确认事实":
+  [36m<a[39m
+    [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile"[39m
+  [36m/>[39m
+
+  Name "导入岗位":
+  [36m<a[39m
+    [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/jobs/import"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33mclass[39m=[32m"container workbench-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"workbench-home-title"[39m
+        [33mclass[39m=[32m"workbench-intro"[39m
+      [36m>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"workbench-home-title"[39m
+        [36m>[39m
+          [0m先处理需要你决定的事项[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m先完成待决定事项，再查看今天的推荐、运行和来源状态。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"first-recommendation-journey-unavailable-title"[39m
+        [33mclass[39m=[32m"workbench-ledger first-recommendation-journey-unavailable"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"first-recommendation-journey-unavailable-title"[39m
+        [36m>[39m
+          [0m首次推荐旅程暂时无法读取[0m
+        [36m</h2>[39m
+        [36m<p>[39m
+          [0m其余工作台内容仍可使用，请稍后刷新重试。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<dl[39m
+        [33maria-label[39m=[32m"当前求职记录摘要"[39m
+        [33mclass[39m=[32m"workbench-summary"[39m
+      [36m>[39m
+        [36m<div>[39m
+          [36m<dt>[39m
+            [0m今日推荐[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m2[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+        [36m<div>[39m
+          [36m<dt>[39m
+            [0m待确认事实[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m1[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+        [36m<div>[39m
+          [36m<dt>[39m
+            [0m运行中的求职代理[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m1[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+        [36m<div>[39m
+          [36m<dt>[39m
+            [0m失败的求职代理[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m1[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+        [36m<div>[39m
+          [36m<dt>[39m
+            [0m需要关注的来源[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m1[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+        [36m<div>[39m
+          [36m<dt>[39m
+            [0m待决定事项[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m2[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-summary-disabled"[39m
+        [36m>[39m
+          [36m<dt>[39m
+            [0m投递记录（尚未启用）[0m
+          [36m</dt>[39m
+          [36m<dd>[39m
+            [0m0[0m
+          [36m</dd>[39m
+        [36m</div>[39m
+      [36m</dl>[39m
+      [36m<p[39m
+        [33mclass[39m=[32m"workbench-summary-note"[39m
+      [36m>[39m
+        [0m投递记录功能尚未启用，当前不会保存或显示投递数据。[0m
+      [36m</p>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"agent-inbox-title"[39m
+        [33mclass[39m=[32m"workbench-ledger agent-inbox-panel"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<p>[39m
+            [0m待处理事项[0m
+          [36m</p>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"agent-inbox-title"[39m
+          [36m>[39m
+            [0m需要你决定的事项[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"事项状态筛选"[39m
+          [33mclass[39m=[32m"agent-inbox-filters"[39m
+          [33mrole[39m=[32m"group"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33maria-pressed[39m=[32m"true"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m待处理[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-pressed[39m=[32m"false"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m未读[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-pressed[39m=[32m"false"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m已读[0m
+          [36m</button>[39m
+          [36m<button[39m
+            [33maria-pressed[39m=[32m"false"[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m已处理[0m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"agent-inbox-live is-empty"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m/>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"agent-inbox-empty"[39m
+        [36m>[39m
+          [0m目前没有需要你决定的事项。新的确认、异常或推荐会显示在这里。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"recommendation-run-title"[39m
+        [33mclass[39m=[32m"workbench-ledger recommendation-run-panel"[39m
+        [33mid[39m=[32m"recommendation-run"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"recommendation-run-title"[39m
+          [36m>[39m
+            [0m开始今日完整推荐[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"recommendation-run-start"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+            [33mdata-disabled[39m=[32m""[39m
+            [33mdata-slot[39m=[32m"button"[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtabindex[39m=[32m"0"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m开始今日发现[0m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<ol[39m
+          [33maria-label[39m=[32m"完整推荐阶段"[39m
+          [33mclass[39m=[32m"recommendation-run-stages"[39m
+        [36m>[39m
+          [36m<li[39m
+            [33mdata-status[39m=[32m"pending"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0m发现岗位[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m等待开始[0m
+            [36m</p>[39m
+          [36m</li>[39m
+          [36m<li[39m
+            [33mdata-status[39m=[32m"pending"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0m资格筛选[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m等待开始[0m
+            [36m</p>[39m
+          [36m</li>[39m
+          [36m<li[39m
+            [33mdata-status[39m=[32m"pending"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0m初步排序[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m等待开始[0m
+            [36m</p>[39m
+          [36m</li>[39m
+          [36m<li[39m
+            [33mdata-status[39m=[32m"pending"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0m深度匹配[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m等待开始[0m
+            [36m</p>[39m
+          [36m</li>[39m
+          [36m<li[39m
+            [33mdata-status[39m=[32m"pending"[39m
+          [36m>[39m
+            [36m<h3>[39m
+              [0m发布结果[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m等待开始[0m
+            [36m</p>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"recommendation-run-live is-empty"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m尚未开始今日发现[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"agent-run-title"[39m
+        [33mclass[39m=[32m"workbench-ledger agent-run-panel"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<p>[39m
+            [0m岗位发现 · 尚未启用[0m
+          [36m</p>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"agent-run-title"[39m
+          [36m>[39m
+            [0m先确认求职目标[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"运行前检查"[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"run-preflight-panel"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m运行前检查[0m
+          [36m</h3>[39m
+          [36m<p[39m
+            [33mrole[39m=[32m"status"[39m
+          [36m>[39m
+            [0m正在读取启动条件。[0m
+          [36m</p>[39m
+        [36m</section>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-row"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h3>[39m
+              [0m告诉 Copilot 你在找什么[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m确认岗位方向、地点和不可接受条件后，才能开始发现岗位。[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+            [33mhref[39m=[32m"/profile/targets"[39m
+          [36m>[39m
+            [0m确认求职目标[0m
+          [36m</a>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"run-policy-entry-title"[39m
+        [33mclass[39m=[32m"workbench-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<p>[39m
+            [0m运行设置 · 账户级[0m
+          [36m</p>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"run-policy-entry-title"[39m
+          [36m>[39m
+            [0m管理运行策略[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-row"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h3>[39m
+              [0m控制后台运行范围[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m查看系统默认和硬上限，设置每次运行的额度与后台运行时间。[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+            [33mhref[39m=[32m"/profile/run-policy"[39m
+          [36m>[39m
+            [0m管理运行策略[0m
+          [36m</a>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-row"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h3>[39m
+              [0m检查模型连接[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m确认当前模型功能是否可用，并查看下一步建议。[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+            [33mhref[39m=[32m"/profile/model-connection"[39m
+          [36m>[39m
+            [0m检查模型连接[0m
+          [36m</a>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"ledger-title"[39m
+        [33mclass[39m=[32m"workbench-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<p>[39m
+            [0m档案纸 · 当前状态[0m
+          [36m</p>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"ledger-title"[39m
+          [36m>[39m
+            [0m职业资料等待确认[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-row"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h3>[39m
+              [0m下一步[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m检查候选事实的来源和证据，确认后再让它们进入求职画像。[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+            [33mhref[39m=[32m"/profile"[39m
+          [36m>[39m
+            [0m查看待确认事实[0m
+          [36m</a>[39m
+        [36m</div>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-ledger-note"[39m
+        [36m>[39m
+          [0m待确认事实尚未进入求职画像，不能用于推荐或材料生成。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"job-import-entry-title"[39m
+        [33mclass[39m=[32m"workbench-ledger workbench-job-import-entry"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-heading"[39m
+        [36m>[39m
+          [36m<p>[39m
+            [0m岗位机会 · 主动导入[0m
+          [36m</p>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"job-import-entry-title"[39m
+          [36m>[39m
+            [0m已有岗位描述？[0m
+          [36m</h2>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"workbench-ledger-row"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<h3>[39m
+              [0m导入一条岗位机会[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m粘贴岗位描述或上传 Markdown 文件，系统会保留原始证据并规范化可查看的岗位信息。[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"workbench-ledger-link workbench-touch-target"[39m
+            [33mhref[39m=[32m"/jobs/import"[39m
+          [36m>[39m
+            [0m导入岗位[0m
+          [36m</a>[39m
+        [36m</div>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/workbench-home-view.test.tsx:76:17
+     74| it("把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力", () => {
+     75|   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialR…
+     76|   expect(screen.getByRole("main", { name: "今日决策台" })).toBeVisible();
+       |                 ^
+     77|   expect(screen.getByRole("heading", { name: "先处理需要你决定的事项" })).toBeVis…
+     78|   for (const label of ["今日推荐", "待确认事实", "运行中的求职代理", "失败的求职代理", "需要关注的来…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
+
+
+ Test Files  7 failed (7)
+      Tests  11 failed | 103 passed (114)
+   Start at  08:11:09
+   Duration  3.51s (transform 1.27s, setup 1.09s, import 2.26s, tests 6.63s, environment 3.75s)
+

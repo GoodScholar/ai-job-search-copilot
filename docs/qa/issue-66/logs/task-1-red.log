@@ -1,0 +1,31 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ components/workbench/workbench-navigation.test.tsx (2 tests | 1 failed) 48ms
+   × renders the fixed 首页、推荐、投递、画像 order and only links real destinations 41ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  components/workbench/workbench-navigation.test.tsx > renders the fixed 首页、推荐、投递、画像 order and only links real destinations
+Error: expect(element).toHaveAccessibleName()
+
+Expected element to have accessible name:
+  职业透镜工作台导航
+Received:
+  求职工作台导航
+ ❯ components/workbench/workbench-navigation.test.tsx:13:42
+     11|   render(<WorkbenchNavigation />);
+     12|
+     13|   expect(screen.getByRole("navigation")).toHaveAccessibleName("职业透镜工作台…
+       |                                          ^
+     14|   expect(screen.getByRole("navigation")).toHaveClass("workbench-naviga…
+     15|   expect(screen.getByRole("link", { name: "画像" })).toHaveAttribute("ar…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 6 passed (7)
+   Start at  07:53:40
+   Duration  674ms (transform 78ms, setup 310ms, import 111ms, tests 104ms, environment 1.20s)
+

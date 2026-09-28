@@ -4,6 +4,8 @@
 
 本记录是**部分验收**，不能作为 Issue #66 完成或合并依据。Task 1、Task 2 与共享壳层已实施；计划中的 Task 3–7（工作台、推荐、画像/导入、目标/来源、运行护栏/模型诊断的逐组件迁移）没有实施。验收脚本只访问了八个静态路由，未能使用既有 fixture 覆盖动态 watchlist 路由及四个任务态。
 
+2026-09-28 返工追加：动态 Watchlist fixture 已完成并产出双视口 runtime 截图；移动 `/profile/run-policy` 根溢出和推荐长清单固定导航遮挡已完成 RED→GREEN 修复。四个动态任务态截图、所有页面逐张人工评分和最终完整构建验证仍未完成，本记录继续保持“部分验收”。
+
 ## 证据与运行时
 
 - before：`screenshots/before/` 中 18 张真实 Web runtime 截图（9 个已访问路由 × Desktop Chrome / Mobile Safari）。
