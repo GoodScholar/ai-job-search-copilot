@@ -29,6 +29,7 @@ async function signIn(page: Page, request: APIRequestContext, suffix: string) {
 
 test("文本型 PDF 经完整导入链路显示页码证据，无文本层 PDF 诚实失败且不入队", async ({ page, request }, testInfo) => {
   await signIn(page, request, testInfo.project.name);
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
   const input = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   await input.setInputFiles({ name: "career.pdf", mimeType: "application/pdf", buffer: createPdf(["## Skills", "- TypeScript"]) });
   await page.getByLabel(/我已检查该文件/).check();

@@ -97,9 +97,11 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   expect(emptyImportResponse.status()).toBe(200);
   await expect(emptyImportResponse.json()).resolves.toEqual({ imports: [] });
 
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
+
   const fileInput = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   const uploadButton = page.getByRole("button", { name: "上传并解析" });
-  await expect(page.getByRole("navigation", { name: "职业透镜工作台导航" })).toHaveText("首页推荐投递画像");
+  await expect(page.getByRole("navigation", { name: "求职工作台导航" })).toHaveText("首页推荐投递画像");
   if (testInfo.project.name === "Desktop Chrome") {
     await page.goto("/profile");
     await page.keyboard.press("Tab");
