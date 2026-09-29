@@ -505,7 +505,7 @@ describe("岗位发现 Agent Run Worker", () => {
     ]));
   }, 45_000);
 
-  it("生产缺模型配置时只读当前 deployment 的 unverified 投影并阻断 Worker", async () => {
+  it("生产缺模型与岗位规范化配置时在启动 Worker 前 fail closed", async () => {
     await stopWorker();
     const productionUserId = randomUUID();
     const productionTargetId = randomUUID();
@@ -520,13 +520,8 @@ describe("岗位发现 Agent Run Worker", () => {
     const transport = vi.fn(async () => { throw new Error("production preflight must not diagnose"); });
     vi.stubGlobal("fetch", transport);
     try {
-      const evaluator = createWorkerRunPreflight({ environment: { APP_ENV: "production" }, executionMode: createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "production" }) });
-      const evaluation = await database.transaction((transaction) => evaluator.evaluate(transaction, { userId: productionUserId, targetId: productionTargetId, workflow: "deep_match", trigger: "automatic" }));
-
-      expect(evaluation.report.status).toBe("blocked");
-      expect(evaluation.report.items.find((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE")).toMatchObject({
-        severity: "blocking", evidence: { kind: "model_diagnostic", status: "unverified" },
-      });
+      expect(() => createWorkerRunPreflight({ environment: { APP_ENV: "production" }, executionMode: createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "production" }) }))
+        .toThrow("JOB_NORMALIZER_PRODUCTION_ADAPTER_REQUIRED");
       expect(transport).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
