@@ -180,7 +180,14 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
     if (failure) return { ok: false, error: failure };
     const match = this.fixtures.find((item) => item.sourceId === input.sourceId && item.detailId === input.detailId);
     return match
-      ? { ok: true, data: { ...summary(match), sourceType: "company_careers", isOfficial: true, ...(this.options.firstRecommendation ? { description: "虚构岗位，仅用于确定性验收。", qualifications: firstRecommendationQualifications } : {}), rawPayload: this.options.firstRecommendation ? { ...summary(match), description: "虚构岗位，仅用于确定性验收。", qualifications: firstRecommendationQualifications } : { ...match.rawPayload } } }
+      ? { ok: true, data: { ...summary(match), sourceType: "company_careers", isOfficial: true, ...(this.options.firstRecommendation ? { description: "虚构岗位，仅用于确定性验收。", qualifications: firstRecommendationQualifications } : {}), rawPayload: this.options.firstRecommendation ? {
+        ...match.rawPayload,
+        company_name: match.company,
+        title: match.title,
+        location: { name: match.location },
+        first_published: match.postedAt,
+        application_deadline: match.deadline,
+      } : { ...match.rawPayload } } }
       : { ok: false, error: { code: "FAKE_JOB_DETAIL_NOT_FOUND", retryable: false } };
   }
 

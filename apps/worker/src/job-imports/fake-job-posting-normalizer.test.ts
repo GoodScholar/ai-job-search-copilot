@@ -42,6 +42,20 @@ describe("FakeJobPostingNormalizer", () => {
     })).toMatchObject({ overallVerdict: "pass", deadlineStatus: "missing" });
   });
 
+  it("首次推荐夹具也只通过生产原文边界提供可评估资格", async () => {
+    const detail = await new FakeJobDiscoveryAdapter({ firstRecommendation: true }).getDetail({ sourceId: "fake:aurora-careers", detailId: "aurora-frontend-001" });
+    if (!detail.ok) throw new Error("expected first recommendation fixture");
+    const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(buildTrustedNormalizationContent(detail.data)));
+
+    expect(output).toMatchObject({
+      company: "=合成验收公司", title: "高级前端工程师（合成验收）", location: "上海", deadline: "2030-12-31T00:00:00.000Z",
+      qualifications: {
+        workMode: { value: "remote" }, salary: { value: { minimum: 30_000, maximum: 45_000, currency: "CNY", period: "month" } },
+        requiredSkills: { value: ["TypeScript"] },
+      },
+    });
+  });
+
   it("只从显式标题和标签提取岗位字段，并原样保留描述章节", async () => {
     const source = [
       "# 高级前端工程师",
