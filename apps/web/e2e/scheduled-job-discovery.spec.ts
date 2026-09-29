@@ -1,3 +1,4 @@
+import { trackWorkbenchRefresh } from "./support/workbench-refresh";
 import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
@@ -125,6 +126,7 @@ test("计划 E2E fixture 的窗口覆盖上海日界分钟", () => {
 });
 
 test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker delivery", async ({ page, request }, testInfo) => {
+  const waitForRefresh = trackWorkbenchRefresh(page);
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-job-discovery-${testInfo.project.name}-${runSuffix}`);
   await addProfileEvidence(request, session.token);
@@ -141,6 +143,11 @@ test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
 
   await expect(page.getByRole("heading", { name: "每天获取岗位推荐" })).toBeVisible();
   await expect(page.getByText("可每日检查 1 个岗位来源")).toBeVisible();
+  const initialSchedule = await page.request.get(`/api/job-targets/${targetId}/discovery-schedule`);
+  expect(initialSchedule.status()).toBe(200);
+  const initial = await initialSchedule.json() as { schedule: { state: string } | null };
+  expect(initial.schedule?.state ?? "disabled").toBe("disabled");
+  expect((await latest(page)).run).toBeNull();
   const time = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
   expect(await time.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
   for (const name of ["启用", "停用", "保存每日检查"]) {
@@ -201,6 +208,7 @@ test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
     await queue.resume().catch(() => undefined);
     await queue.close();
   }
+  await waitForRefresh();
   await page.goto(`/home?runId=${queued.runId}#agent-run`);
   const recommendation = page.getByRole("region", { name: "开始今日完整推荐" });
   await expect(recommendation).toBeVisible();

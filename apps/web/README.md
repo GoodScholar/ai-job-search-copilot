@@ -1,9 +1,11 @@
-# AI Job Search Copilot Web
+# AI Job Search Copilot Web · v0.1.0-alpha
+
+发布准备版本，许可证待人工审核，尚未公开发布；无需第三方凭据的合成演示见[根 README](../../README.md)。
 
 Web 是本地产品运行时的一部分，基于 Next.js App Router。请在仓库根目录使用完整运行时启动，而不是单独启动营销页面：
 
 ```bash
-pnpm install && pnpm dev
+pnpm install --frozen-lockfile && pnpm dev
 ```
 
 默认访问地址是 <http://127.0.0.1:3020>；API 与运行依赖会同时启动。完整的前置条件、端口、停止方法和验证命令见[根 README](../../README.md)。

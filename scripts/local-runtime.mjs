@@ -166,7 +166,7 @@ export function startApplications({ spawnProcess = spawn, env = process.env, con
   const runtime = config ?? createRuntimeConfig({ env });
   return spawnProcess(
     "pnpm",
-    ["--parallel", "--stream", "--filter", "web", "--filter", "api", "--filter", "worker", "dev"],
+    ["--parallel", "--stream", "--filter", "web", "--filter", "api", "--filter", "worker", runtime.test ? "dev:e2e" : "dev"],
     {
       detached: false,
       stdio: "inherit",

@@ -71,6 +71,24 @@ describe("模型连接诊断持久化协调", () => {
     expect(fake.calls()).toBe(1);
   });
 
+  it("并发只读投影共享稳定诊断，不把另一个读者误报为 checking", async () => {
+    fresh();
+    const fake = adapter(`concurrent-readers-${crypto.randomUUID()}`);
+    await service(fake.value).run();
+    const reader = createModelDiagnosticProjectionReader({ configurationFingerprint: fake.value.configurationFingerprint });
+    const other = createDatabase(container.getConnectionUri());
+    try {
+      await database.transaction(async (first) => {
+        await expect(reader.get(first, now)).resolves.toMatchObject({ status: "available" });
+        // 第一个读事务仍持锁，第二个独立连接也必须能读取同一稳定结果。
+        await other.transaction(async (second) => {
+          await expect(reader.get(second, now)).resolves.toMatchObject({ status: "available" });
+        });
+      });
+      expect(fake.calls()).toBe(1);
+    } finally { await other.$client.end(); }
+  });
+
   it("连续稳定失败按上限指数退避，结束后允许新的探针", async () => {
     now = new Date("2026-09-05T01:00:00.000Z"); const fake = adapter(`failure-${crypto.randomUUID()}`, unavailable); const diagnostics = service(fake.value);
     const first = await diagnostics.run(); expect(first.retryAt).toBe("2026-09-05T01:00:30.000Z");

@@ -8,9 +8,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 */
 import type { Metadata } from "next";
 import "./globals.css";
+import webPackage from "@/package.json";
 
 export const metadata: Metadata = {
   title: "AI Job Search Copilot",
+  applicationName: `AI Job Search Copilot v${webPackage.version}`,
   description: "每天筛出最值得处理的技术岗位，并用真实证据解释推荐",
 };
 

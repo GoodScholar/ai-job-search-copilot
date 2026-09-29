@@ -20,7 +20,7 @@ export function ApprovalBoundarySection() {
           </ul>
         </div>
       </div>
-      <p className="approval-note">本地 Beta 不自动执行外部行动</p>
+      <p className="approval-note">Alpha 不自动执行外部行动</p>
     </section>
   );
 }

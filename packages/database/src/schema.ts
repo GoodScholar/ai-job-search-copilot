@@ -501,12 +501,15 @@ export const jobOpportunities = pgTable("job_opportunities", {
   normalizedData: jsonb("normalized_data").notNull(),
   availability: varchar("availability", { length: 16 }).notNull().default("open"),
   availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archiveVersion: integer("archive_version").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("job_opportunities_current_dedup_unique").on(table.userId, table.dedupKey).where(sql`${table.canonicalOpportunityId} is null`),
   unique("job_opportunities_user_id_id_unique").on(table.userId, table.id),
   index("job_opportunities_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
+  index("job_opportunities_archive_projection_idx").on(table.userId, table.archivedAt, table.updatedAt, table.id),
   index("job_opportunities_canonical_idx").on(table.userId, table.canonicalOpportunityId),
   foreignKey({
     columns: [table.userId, table.importId],
@@ -527,6 +530,81 @@ export const jobOpportunities = pgTable("job_opportunities", {
   check("job_opportunities_canonical_opportunity_not_self", sql`${table.canonicalOpportunityId} is null or ${table.canonicalOpportunityId} <> ${table.id}`),
   check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
   check("job_opportunities_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
+  check("job_opportunities_archive_version_nonnegative", sql`${table.archiveVersion} >= 0`),
+]);
+
+/** 用户可变的岗位归档投影；岗位来源与推荐证据始终留在机会及其历史记录上。 */
+export const jobOpportunityArchiveCommands = pgTable("job_opportunity_archive_commands", {
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  opportunityId: uuid("opportunity_id").notNull(),
+  commandId: uuid("command_id").notNull(),
+  action: varchar("action", { length: 8 }).notNull(),
+  expectedVersion: integer("expected_version").notNull(),
+  applied: boolean("applied").notNull(),
+  resultSnapshot: jsonb("result_snapshot").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.commandId], name: "job_opportunity_archive_commands_pk" }),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "job_opportunity_archive_commands_owner_opportunity_fk" }),
+  check("job_opportunity_archive_commands_action_check", sql`${table.action} in ('archive', 'restore')`),
+  check("job_opportunity_archive_commands_expected_version_nonnegative", sql`${table.expectedVersion} >= 0`),
+  check("job_opportunity_archive_commands_result_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object' and octet_length(${table.resultSnapshot}::text) <= 1024`),
+]);
+
+/** 岗位导出请求的不可变元数据；状态与交付对象可随生成和清理推进。 */
+export const jobExports = pgTable("job_exports", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  commandId: uuid("command_id").notNull(),
+  filter: varchar("filter", { length: 16 }).notNull(),
+  fieldVersion: integer("field_version").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("generating"),
+  rowCount: integer("row_count").notNull(),
+  objectKey: varchar("object_key", { length: 512 }).notNull(),
+  queuePublishedAt: timestamp("queue_published_at", { withTimezone: true }),
+  objectDeletedAt: timestamp("object_deleted_at", { withTimezone: true }),
+  failureCode: varchar("failure_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_exports_user_command_unique").on(table.userId, table.commandId),
+  unique("job_exports_user_id_id_unique").on(table.userId, table.id),
+  index("job_exports_owner_created_idx").on(table.userId, table.createdAt, table.id),
+  index("job_exports_recovery_idx").on(table.status, table.queuePublishedAt, table.createdAt),
+  index("job_exports_expiry_idx").on(table.status, table.expiresAt, table.objectDeletedAt),
+  check("job_exports_filter_check", sql`${table.filter} in ('active', 'archived', 'all')`),
+  check("job_exports_field_version_check", sql`${table.fieldVersion} = 1`),
+  check("job_exports_status_check", sql`${table.status} in ('generating', 'ready', 'failed', 'expired')`),
+  check("job_exports_row_count_nonnegative", sql`${table.rowCount} >= 0`),
+  check("job_exports_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} = 'JOB_EXPORT_GENERATION_FAILED'`),
+]);
+
+/** 生成时一次性冻结的安全字段；Worker 绝不回读岗位、推荐或投递表。 */
+export const jobExportRows = pgTable("job_export_rows", {
+  exportId: uuid("export_id").notNull().references(() => jobExports.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  ordinal: integer("ordinal").notNull(),
+  opportunityId: uuid("opportunity_id").notNull(),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull(),
+  title: text("title"),
+  company: text("company"),
+  location: text("location"),
+  sourceUrl: text("source_url"),
+  availability: varchar("availability", { length: 16 }).notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  recommendationDecision: varchar("recommendation_decision", { length: 16 }),
+  applicationStatus: varchar("application_status", { length: 32 }),
+  postedAt: timestamp("posted_at", { withTimezone: true }),
+  deadline: timestamp("deadline", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.exportId, table.ordinal], name: "job_export_rows_pk" }),
+  foreignKey({ columns: [table.userId, table.exportId], foreignColumns: [jobExports.userId, jobExports.id], name: "job_export_rows_owner_export_fk" }),
+  check("job_export_rows_ordinal_positive", sql`${table.ordinal} >= 1`),
+  check("job_export_rows_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
+  check("job_export_rows_decision_check", sql`${table.recommendationDecision} is null or ${table.recommendationDecision} in ('pending', 'saved', 'ignored')`),
+  check("job_export_rows_application_status_check", sql`${table.applicationStatus} is null`),
 ]);
 
 export const jobOpportunitySources = pgTable("job_opportunity_sources", {
@@ -1336,3 +1414,17 @@ export const recommendationExclusions = pgTable("recommendation_exclusions", {
 }, (table) => [
   index("recommendation_exclusions_owner_target_opportunity_idx").on(table.userId, table.targetId, table.opportunityId, table.createdAt), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_exclusions_owner_target_fk" }), foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "recommendation_exclusions_owner_opportunity_fk" }), foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "recommendation_exclusions_owner_list_fk" }), check("recommendation_exclusions_reason_code_check", sql`${table.reasonCode} in ('TRIAGE_NOT_PASS', 'DEADLINE_EXPIRED', 'SCORE_BELOW_THRESHOLD', 'CANDIDATE_LIMIT', 'MATCH_QUALITY_INSUFFICIENT', 'RULE_EXCLUDED')`),
 ]);
+
+/** 运营登记与随机指标标识的私有映射；不得导出给产品指标消费者。 */
+export const journeyMetricEnrollments = pgTable("journey_metric_enrollments", {
+  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id),
+  journeyId: uuid("journey_id").notNull().unique().defaultRandom(),
+  configuration: varchar("configuration", { length: 16 }).notNull(),
+}, (table) => [check("journey_metric_enrollments_configuration", sql`${table.configuration} in ('valid', 'invalid')`)]);
+
+/** 指标历史只能被观察器追加，产品领域逻辑不读取该表。 */
+export const journeyMetricEvents = pgTable("journey_metric_events", {
+  eventKey: varchar("event_key", { length: 64 }).primaryKey(),
+  journeyId: uuid("journey_id").notNull().references(() => journeyMetricEnrollments.journeyId),
+  event: jsonb("event").notNull(),
+}, (table) => [index("journey_metric_events_journey_idx").on(table.journeyId)]);

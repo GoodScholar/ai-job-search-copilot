@@ -1,6 +1,6 @@
 {
   "name": "@job-copilot/contracts",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,6 +13,8 @@
     "./job-imports": "./src/job-imports.ts",
     "./job-normalizer": "./src/job-normalizer.ts",
     "./job-normalizer-evaluation": "./src/job-normalizer-evaluation.ts",
+    "./job-opportunity-archives": "./src/job-opportunity-archives.ts",
+    "./job-exports": "./src/job-exports.ts",
     "./job-triage": "./src/job-triage.ts",
     "./deep-match": "./src/deep-match.ts",
     "./recommendations": "./src/recommendations.ts",
@@ -30,7 +32,8 @@
     "./workbench": "./src/workbench.ts",
     "./runtime": "./src/runtime.ts",
     "./model-diagnostics": "./src/model-diagnostics.ts",
-    "./run-preflight": "./src/run-preflight.ts"
+    "./run-preflight": "./src/run-preflight.ts",
+    "./journey-metrics": "./src/journey-metrics.ts"
   },
   "scripts": {
     "test": "vitest run",

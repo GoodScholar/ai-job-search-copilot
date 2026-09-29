@@ -1,3 +1,4 @@
+import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { AGENT_RUN_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import type {
@@ -16,6 +17,7 @@ type AdapterOperation = "search" | "searchBatch" | "getDetail";
 export type FakeJobDiscoveryAdapterOptions = {
   failures?: Partial<Record<AdapterOperation, AdapterFailure>>;
   delayMs?: number;
+  firstRecommendation?: boolean;
 };
 
 type Fixture = {
@@ -82,6 +84,20 @@ function fixture(
   };
 }
 
+// 仅由 test 环境的显式运行场景启用；字段及原文都标明合成测试来源。
+const firstRecommendationQualifications = JobQualificationsSchema.parse({
+  workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } },
+  relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "搬迁", value: "否" } },
+  salary: { value: { minimum: 30000, maximum: 45000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "薪资", value: "CNY 30000-45000/month" } },
+  seniority: null,
+  education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } },
+  languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } },
+  workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } },
+  industry: { value: "云计算", evidence: { field: "industry", path: "行业", value: "云计算" } },
+  employmentType: { value: "direct", evidence: { field: "employmentType", path: "雇佣类型", value: "直接雇佣" } },
+  requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "必备技能", value: "TypeScript" } },
+});
+
 function summary(item: Fixture) {
   return {
     sourceId: item.sourceId,
@@ -111,6 +127,13 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
   readonly adapterVersion = "fake-job-discovery-v1";
   constructor(private readonly options: FakeJobDiscoveryAdapterOptions = {}) {}
 
+  private get fixtures(): readonly Fixture[] {
+    if (!this.options.firstRecommendation) return fixtures;
+    return fixtures.filter((item) => item.detailId === "aurora-frontend-001").map((item) => ({
+      ...item, company: "=合成验收公司", title: "高级前端工程师（合成验收）", deadline: "2030-12-31T00:00:00.000Z",
+    }));
+  }
+
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
     return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
   }
@@ -119,7 +142,7 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
     await this.delay();
     const failure = this.options.failures?.search;
     if (failure) return { ok: false, error: failure };
-    const match = fixtures.find((item) => item.sourceId === input.sourceId && matchesTarget(item, input.targetSnapshot));
+    const match = this.fixtures.find((item) => item.sourceId === input.sourceId && matchesTarget(item, input.targetSnapshot));
     return match
       ? { ok: true, data: summary(match) }
       : { ok: false, error: { code: "FAKE_JOB_SEARCH_EMPTY", retryable: false } };
@@ -130,7 +153,7 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
     const failure = this.options.failures?.searchBatch;
     if (failure) return { ok: false, error: failure };
     const sourceOrder = new Map<string, number>(input.sourceScope.sources.map((sourceId, index) => [sourceId, index]));
-    const matched = fixtures
+    const matched = this.fixtures
       .filter((item) => sourceOrder.has(item.sourceId) && matchesTarget(item, input.targetSnapshot))
       .sort((left, right) => {
         const sourceDifference = sourceOrder.get(left.sourceId)! - sourceOrder.get(right.sourceId)!;
@@ -155,9 +178,9 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
     await this.delay();
     const failure = this.options.failures?.getDetail;
     if (failure) return { ok: false, error: failure };
-    const match = fixtures.find((item) => item.sourceId === input.sourceId && item.detailId === input.detailId);
+    const match = this.fixtures.find((item) => item.sourceId === input.sourceId && item.detailId === input.detailId);
     return match
-      ? { ok: true, data: { ...summary(match), sourceType: "company_careers", isOfficial: true, rawPayload: { ...match.rawPayload } } }
+      ? { ok: true, data: { ...summary(match), sourceType: "company_careers", isOfficial: true, ...(this.options.firstRecommendation ? { description: "虚构岗位，仅用于确定性验收。", qualifications: firstRecommendationQualifications } : {}), rawPayload: this.options.firstRecommendation ? { ...summary(match), description: "虚构岗位，仅用于确定性验收。", qualifications: firstRecommendationQualifications } : { ...match.rawPayload } } }
       : { ok: false, error: { code: "FAKE_JOB_DETAIL_NOT_FOUND", retryable: false } };
   }
 

@@ -2,6 +2,7 @@
 
 import { JobImportDetailSchema, type JobImportDetail, type JobImportList, type JobImportStatus } from "@job-copilot/contracts/job-imports";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition, type FormEvent, type KeyboardEvent } from "react";
 import { createJobImportAction, type JobImportActionState } from "@/app/(workbench)/jobs/import/actions";
 import { JobTriagePanel } from "./job-triage-panel";
@@ -180,6 +181,7 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
       <section aria-labelledby="job-import-title" className="workbench-intro">
         <p className="workbench-kicker">岗位机会 · 主动导入</p><h1 id="job-import-title">导入岗位</h1>
         <p>提交岗位描述或 Markdown 文件后，系统会保留原始证据，并将可确认的信息规范化为岗位机会。</p>
+        <Link className="workbench-touch-target" href="/jobs">管理岗位与已归档岗位</Link>
       </section>
       <section aria-labelledby="job-import-form-title" className="job-import-panel">
         <h2 id="job-import-form-title">添加岗位内容</h2>

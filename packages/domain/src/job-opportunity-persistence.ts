@@ -1,8 +1,9 @@
+import type { JobQualifications } from "@job-copilot/contracts/job-imports";
 import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { jobOpportunities, jobOpportunitySources } from "@job-copilot/database";
 
-type Discovery = { sourceId: string; detailId: string; company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; sourceType: string; isOfficial: boolean; rawPayload: Record<string, unknown> };
+type Discovery = { sourceId: string; detailId: string; company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; sourceType: string; isOfficial: boolean; rawPayload: Record<string, unknown>; description?: string | null; qualifications?: JobQualifications };
 type PersistenceDb = any;
 
 function sha256(value: string): string { return createHash("sha256").update(value, "utf8").digest("hex"); }
@@ -16,7 +17,10 @@ function opportunityKey(input: { company: string | null; title: string | null; l
 
 /** 发现结果的可展示规范化字段；原始对象与对象存储路径不进入业务数据。 */
 export function discoveryNormalizedData(detail: Discovery) {
-  return { sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, sourceType: detail.sourceType, isOfficial: detail.isOfficial };
+  return { sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, sourceType: detail.sourceType, isOfficial: detail.isOfficial,
+    ...(detail.description !== undefined ? { description: detail.description } : {}),
+    ...(detail.qualifications !== undefined ? { qualifications: detail.qualifications } : {}),
+  };
 }
 
 async function resolveCurrentOpportunity(db: PersistenceDb, userId: string, opportunity: { id: string; canonicalOpportunityId: string | null }) {

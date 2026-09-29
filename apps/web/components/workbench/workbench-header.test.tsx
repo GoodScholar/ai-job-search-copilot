@@ -13,6 +13,7 @@ import { WorkbenchHeader } from "./workbench-header";
 it("marks only real workbench controls as 44px touch targets", () => {
   render(<WorkbenchHeader />);
 
+  expect(screen.getByText("v0.1.0-alpha")).toBeVisible();
   expect(screen.getByRole("link", { name: "AI Job Search Copilot" })).toHaveClass("workbench-touch-target");
   expect(screen.getByRole("link", { name: "首页" })).toHaveClass("workbench-touch-target");
   expect(screen.getByRole("link", { name: "画像" })).toHaveClass("workbench-touch-target");

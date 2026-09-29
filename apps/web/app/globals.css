@@ -1152,6 +1152,9 @@ summary.workbench-touch-target:focus-visible,
 .job-import-workbench { display: grid; gap: 1.5rem; }
 .job-import-panel { background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-paper); min-width: 0; padding: clamp(1.25rem, 4vw, 2rem); }
 .job-import-panel li, .job-import-panel p { min-width: 0; overflow-wrap: anywhere; }
+.job-export-panel { border-block: 1px solid var(--rule); margin-block: 1.5rem; padding-block: 1.5rem; }
+.job-export-panel ul { padding-inline-start: 1.25rem; }
+.job-export-panel li + li { margin-top: 1rem; }
 .job-import-panel h2 { font-size: 1.35rem; letter-spacing: -0.025em; margin: 0 0 1rem; }
 .recommendation-result-summary { border-block: 1px solid var(--rule); display: grid; gap: 0.65rem; margin-block: 1.5rem; padding-block: 1.25rem; }
 .recommendation-result-summary h2, .recommendation-result-summary h3 { margin: 0; }

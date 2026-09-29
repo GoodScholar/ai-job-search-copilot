@@ -33,7 +33,7 @@ it("keeps the evidence and approval narrative before the final login action", ()
   expect(screen.getByText("提交申请")).toBeInTheDocument();
   expect(screen.getByText("发送邮件")).toBeInTheDocument();
   expect(screen.getByText("联系招聘者")).toBeInTheDocument();
-  expect(screen.getByText("本地 Beta 不自动执行外部行动")).toBeInTheDocument();
+  expect(screen.getByText("Alpha 不自动执行外部行动")).toBeInTheDocument();
   expect(screen.getByText(/Markdown 是一级导入\/导出格式/)).toBeInTheDocument();
   expect(screen.getByText("DOCX")).toBeInTheDocument();
   expect(screen.getByText("PDF")).toBeInTheDocument();

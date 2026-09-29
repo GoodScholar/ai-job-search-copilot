@@ -2,6 +2,10 @@
 
 <!-- impeccable:product-schema 1 -->
 
+## Release
+
+v0.1.0-alpha：首次推荐闭环的发布准备版本，尚未公开发布；许可证待 #60 人工法律审核，未宣称 AGPL-3.0 已获授权。已交付范围与限制见 [CHANGELOG.md](./CHANGELOG.md)，以下保留完整产品目标。
+
 ## Platform
 
 web

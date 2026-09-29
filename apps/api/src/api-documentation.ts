@@ -5,7 +5,7 @@ import { cleanupOpenApiDoc } from "nestjs-zod";
 export function configureOpenApi(app: NestFastifyApplication): void {
   const document = SwaggerModule.createDocument(app, new DocumentBuilder()
     .setTitle("AI Job Search Copilot API")
-    .setVersion("1")
+    .setVersion("0.1.0-alpha")
     .addBearerAuth({
       type: "http",
       scheme: "bearer",

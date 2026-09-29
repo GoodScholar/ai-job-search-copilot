@@ -299,6 +299,120 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
+test("岗位归档、恢复和不可变 CSV 导出保留推荐证据，并在工作台与移动端保持可访问", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const account = await createAccount(request, info);
+  const opportunity = await importAndTriage(request, account, "可归档推荐岗位");
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const discoveryRunId = await runDiscovery(request, account, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000451" : "10000000-0000-4000-8000-000000000452");
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
+  await waitForRun(page, discoveryRunId);
+  await waitForRun(page, await automaticMatchRun(account.userId, discoveryRunId));
+  await page.reload();
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("可归档推荐岗位");
+
+  const exportFixture = new Client({ connectionString: databaseUrl });
+  await exportFixture.connect();
+  try { await exportFixture.query("update job_opportunities set company = '=1+1' where user_id = $1 and id = $2", [account.userId, opportunity.opportunityId]); }
+  finally { await exportFixture.end(); }
+  await page.goto("/jobs");
+  const exportResponse = page.waitForResponse((response) => response.url().endsWith("/api/job-exports") && response.request().method() === "POST");
+  const generateExport = page.getByRole("button", { name: "生成 CSV 快照" });
+  if (info.project.name === "Desktop Chrome") { await tabTo(page, generateExport); await expectVisibleKeyboardFocus(generateExport); await page.keyboard.press("Enter"); } else await generateExport.tap();
+  const exportCreated = await exportResponse;
+  expect(exportCreated.status()).toBe(201);
+  const snapshot = await exportCreated.json() as { id: string; rowCount: number };
+  expect(snapshot.rowCount).toBe(1);
+  await expect(page.getByText("生成中，可离开页面，稍后回来下载。")).toBeVisible();
+  await expect(page.getByRole("button", { name: "下载 CSV" })).toBeVisible({ timeout: 20_000 });
+  const file = await request.get(`${apiBaseUrl}/v1/job-exports/${snapshot.id}/download`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(file.status()).toBe(200);
+  const frozenBytes = await file.body();
+  expect([...frozenBytes.subarray(0, 3)]).toEqual([239, 187, 191]);
+  expect(frozenBytes.toString("utf8")).toContain("可归档推荐岗位");
+  expect(frozenBytes.toString("utf8")).toContain('"\'=1+1"');
+  const browserDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载 CSV" }).click();
+  expect((await browserDownload).suggestedFilename()).toBe(`job-opportunities-${snapshot.id}.csv`);
+  const activeControls = page.locator("main .workbench-touch-target");
+  expect(await activeControls.evaluateAll((items) => items.every((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.height >= 44 && rect.width >= 44;
+  }))).toBe(true);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await page.locator("main").evaluate((element) => getComputedStyle(element).scrollBehavior)).not.toBe("smooth");
+  const archive = page.getByRole("button", { name: "归档岗位：可归档推荐岗位" });
+  if (info.project.name === "Desktop Chrome") { await tabTo(page, archive); await expectVisibleKeyboardFocus(archive); await page.keyboard.press("Enter"); } else await archive.tap();
+  await expect(page.getByText("已归档，可在归档岗位中恢复。")).toBeVisible();
+  const changedFixture = new Client({ connectionString: databaseUrl });
+  await changedFixture.connect();
+  try { await changedFixture.query("update job_opportunities set company = '更新后的公司' where user_id = $1 and id = $2", [account.userId, opportunity.opportunityId]); }
+  finally { await changedFixture.end(); }
+  await page.reload();
+  await expect(page.getByText("没有活跃岗位。")).toBeVisible();
+  await expect(page.getByRole("button", { name: "下载 CSV" })).toBeVisible();
+  const replay = await request.post(`${apiBaseUrl}/v1/job-exports`, { headers: { authorization: `Bearer ${account.token}` }, data: exportCreated.request().postDataJSON() });
+  expect(replay.status()).toBe(201);
+  await expect(replay.json()).resolves.toMatchObject({ id: snapshot.id, rowCount: 1 });
+  const frozenAgain = await request.get(`${apiBaseUrl}/v1/job-exports/${snapshot.id}/download`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(frozenAgain.status()).toBe(200);
+  expect(await frozenAgain.body()).toEqual(frozenBytes);
+  const foreignSession = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, { headers: { "x-dev-auth-secret": secret }, data: { subject: `exports-foreign-${info.project.name}-${Date.now()}` } });
+  expect(foreignSession.status()).toBe(201);
+  const foreignToken = (await foreignSession.json() as { sessionToken: string }).sessionToken;
+  expect((await request.get(`${apiBaseUrl}/v1/job-exports/${snapshot.id}/download`, { headers: { authorization: `Bearer ${foreignToken}` } })).status()).toBe(404);
+
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
+  await expect(page.getByText("当前推荐岗位均已归档。")).toBeVisible();
+  await expect(page.getByRole("link", { name: "查看已归档岗位" })).toHaveAttribute("href", "/jobs?filter=archived");
+
+  await page.goto("/jobs?filter=archived");
+  await expect(page.getByRole("checkbox", { name: "包含已归档岗位" })).toBeChecked();
+  const archivedExportResponse = page.waitForResponse((response) => response.url().endsWith("/api/job-exports") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "生成 CSV 快照" }).click();
+  expect((await archivedExportResponse).request().postDataJSON()).toMatchObject({ filter: "archived" });
+  await expect(page.getByRole("button", { name: "下载 CSV", exact: true })).toHaveCount(2, { timeout: 20_000 });
+  const archivedControls = page.locator("main .workbench-touch-target");
+  expect(await archivedControls.evaluateAll((items) => items.every((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.height >= 44 && rect.width >= 44;
+  }))).toBe(true);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  const restore = page.getByRole("button", { name: "恢复岗位：可归档推荐岗位" });
+  if (info.project.name === "Desktop Chrome") await restore.click(); else await restore.tap();
+  await expect(page.getByText("已恢复到活跃岗位。")).toBeVisible();
+  await page.goto("/jobs");
+  await expect(page.getByRole("button", { name: "归档岗位：可归档推荐岗位" })).toBeVisible();
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("可归档推荐岗位");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  const persisted = await request.get(`${apiBaseUrl}/v1/recommendations/latest?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(persisted.status()).toBe(200);
+  expect((await persisted.json() as { items: Array<{ opportunityId: string }> }).items).toEqual(expect.arrayContaining([expect.objectContaining({ opportunityId: opportunity.opportunityId })]));
+
+  const statusFixtures = new Client({ connectionString: databaseUrl });
+  await statusFixtures.connect();
+  const expiredId = crypto.randomUUID();
+  const failedId = crypto.randomUUID();
+  try {
+    await statusFixtures.query(`insert into job_exports (id, user_id, command_id, filter, field_version, status, row_count, object_key, failure_code, created_at, expires_at)
+      values ($1, $3, $1, 'active', 1, 'ready', 0, $4, null, now() - interval '25 hours', now() - interval '1 hour'),
+             ($2, $3, $2, 'active', 1, 'failed', 0, $5, 'JOB_EXPORT_GENERATION_FAILED', now(), now() + interval '24 hours')`,
+    [expiredId, failedId, account.userId, `accounts/${account.userId}/job-exports/${expiredId}/v1.csv`, `accounts/${account.userId}/job-exports/${failedId}/v1.csv`]);
+  } finally { await statusFixtures.end(); }
+  await page.goto("/jobs");
+  await expect(page.getByText("文件生成失败，请使用上方按钮重新生成快照。")).toBeVisible();
+  await expect(page.getByText("已过期，请按当前筛选重新生成快照。")).toBeVisible();
+  const expired = await page.request.get(`/api/job-exports/${expiredId}/download`);
+  expect(expired.status()).toBe(410);
+  expect(await expired.body()).toHaveLength(0);
+  await page.screenshot({ path: info.outputPath("job-exports.png"), fullPage: true });
+});
+
 test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ page, request }, info) => {
   test.setTimeout(90_000);
   const account = await createAccount(request, info);

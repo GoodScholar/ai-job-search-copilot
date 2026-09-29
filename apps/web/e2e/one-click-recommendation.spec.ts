@@ -1,7 +1,8 @@
 import { Client } from "pg";
+import { JourneyMetricEventSchema } from "@job-copilot/contracts/journey-metrics";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
-import { Queue } from "bullmq";
+import { Queue, QueueEvents } from "bullmq";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -106,6 +107,30 @@ async function createAccount(request: APIRequestContext, info: TestInfo, scenari
   expect(diagnostic.status()).toBe(201);
   await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   return { token: body.sessionToken, userId: body.account.userId, targetId };
+}
+
+async function enrollMetricFixture(userId: string): Promise<string> {
+  const db = new Client({ connectionString: databaseUrl });
+  await db.connect();
+  try {
+    const { rows } = await db.query<{ journey_id: string }>("insert into journey_metric_enrollments (user_id, configuration) values ($1, 'valid') returning journey_id", [userId]);
+    return rows[0]!.journey_id;
+  } finally { await db.end(); }
+}
+
+// 指标落地表是产品分析的输出边界，断言对外事件白名单，不读取采集器内部状态。
+async function expectMetricCompletion(journeyId: string, account: Account, kind: "recommendation_list" | "no_recommendations") {
+  await expect.poll(async () => {
+    const db = new Client({ connectionString: databaseUrl });
+    await db.connect();
+    try {
+      const { rows } = await db.query<{ event: unknown }>("select event from journey_metric_events where journey_id = $1 and event->>'type' = 'completed'", [journeyId]);
+      const events = rows.map((row) => JourneyMetricEventSchema.parse(row.event));
+      expect(JSON.stringify(events)).not.toContain(account.userId);
+      expect(JSON.stringify(events)).not.toContain(account.token);
+      return events.map((event) => event.terminalStatus);
+    } finally { await db.end(); }
+  }, { timeout: 20_000 }).toEqual([kind]);
 }
 
 async function setSessionCookie(page: Page, token: string): Promise<void> {
@@ -308,27 +333,11 @@ async function recommendationListSnapshot(request: APIRequestContext, token: str
   return response.json();
 }
 
-async function recommendationControlBinding(userId: string, rootRunId: string, commandId: string): Promise<{ rootRunId: string; physicalRunId: string; action: string; applied: boolean; physicalParentRunId: string | null }> {
-  const client = new Client({ connectionString: databaseUrl });
-  await client.connect();
-  try {
-    const result = await client.query(`
-      select logical.root_run_id, logical.physical_run_id, logical.action, physical.applied, run.parent_run_id
-      from recommendation_run_control_commands logical
-      join agent_run_control_commands physical on physical.user_id = logical.user_id and physical.run_id = logical.physical_run_id and physical.command_id = logical.command_id
-      join agent_runs run on run.user_id = logical.user_id and run.id = logical.physical_run_id
-      where logical.user_id = $1 and logical.root_run_id = $2 and logical.command_id = $3
-    `, [userId, rootRunId, commandId]);
-    expect(result.rows).toHaveLength(1);
-    const row = result.rows[0]!;
-    return { rootRunId: row.root_run_id, physicalRunId: row.physical_run_id, action: row.action, applied: row.applied, physicalParentRunId: row.parent_run_id };
-  } finally { await client.end(); }
-}
-
 test("完整来源输入经真实推荐启动、worker 与发布链交付一条推荐", async ({ page, request }, info) => {
   test.setTimeout(90_000);
   test.skip(sourceHealthOnly, "完整来源输入仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "full");
+  const journeyId = await enrollMetricFixture(account.userId);
   const idempotencyKey = scenarioKey(info, "full");
   const before = await sideFacts(account.userId, account.targetId);
   const rootRunId = await startFromHome(page, request, account, idempotencyKey);
@@ -341,6 +350,9 @@ test("完整来源输入经真实推荐启动、worker 与发布链交付一条�
   await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
   await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
+  await expectMetricCompletion(journeyId, account, "recommendation_list");
+  await page.reload();
+  await expectMetricCompletion(journeyId, account, "recommendation_list");
   expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
 });
 
@@ -348,6 +360,7 @@ test("可信空来源回执经真实推荐启动、worker 与发布链交付暂�
   test.setTimeout(90_000);
   test.skip(sourceHealthOnly, "可信空来源仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "empty");
+  const journeyId = await enrollMetricFixture(account.userId);
   const before = await sideFacts(account.userId, account.targetId);
   const rootRunId = await startFromHome(page, request, account, scenarioKey(info, "empty"));
   const run = await completedRun(request, account.token, rootRunId);
@@ -361,6 +374,7 @@ test("可信空来源回执经真实推荐启动、worker 与发布链交付暂�
   await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
   await expect(page.getByRole("heading", { name: "今天暂无推荐" })).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" })).toHaveCount(0);
+  await expectMetricCompletion(journeyId, account, "no_recommendations");
   expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
 });
 
@@ -450,7 +464,7 @@ test("离页后以精确 root SSR 恢复并继续同一推荐运行", async ({ p
   }
 });
 
-test("同一账户全局停止保留历史 A，解除后只由用户继续 B", async ({ page, request }, info) => {
+test("同一账户全局停止保留历史 A、取消排队 B，解除后不恢复 B", async ({ page, request }, info) => {
   test.setTimeout(150_000);
   test.skip(sourceHealthOnly, "全局停止旅程仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "full", "global-stop");
@@ -458,6 +472,7 @@ test("同一账户全局停止保留历史 A，解除后只由用户继续 B", a
   const bKey = scenarioKey(info, "globalStopB");
   const before = await sideFacts(account.userId, account.targetId);
   const queue = new Queue(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
+  const queueEvents = new QueueEvents(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
   let paused = false;
   let trackAfterRelease = false;
   let bRootRunId = "";
@@ -494,19 +509,11 @@ test("同一账户全局停止保留历史 A，解除后只由用户继续 B", a
     await expect.poll(() => accountRunControl(request, account.token)).toMatchObject({ stoppedAt: expect.any(String), controlVersion: 1 });
     await expect.poll(() => browserPreparation(page)).toMatchObject({ preflight: { status: "blocked", items: expect.arrayContaining([expect.objectContaining({ code: "ACCOUNT_RUN_POLICY_BLOCKED" })]) } });
 
-    await expect.poll(async () => (await recommendationRun(request, account.token, bRootRunId)).status, { timeout: 30_000 }).toBe("paused");
+    await expect.poll(async () => (await recommendationRun(request, account.token, bRootRunId)).status, { timeout: 30_000 }).toBe("cancelled");
     await page.goto(`/home?runId=${bRootRunId}`);
     const panel = page.locator(".recommendation-run-panel");
-    await expect(panel.getByRole("status")).toContainText("本次推荐已暂停");
-    await expect(panel.getByRole("button", { name: "本次推荐已暂停" })).toBeDisabled();
-    await expect(panel.getByRole("link", { name: "查看运行设置" })).toHaveAttribute("href", "/profile/run-policy");
-    await queue.resume();
-    paused = false;
-    const blockedResumeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && response.request().method() === "POST");
-    await panel.getByRole("button", { name: "继续本次推荐" }).click();
-    expect((await blockedResumeResponse).status()).toBe(409);
-    await expect(panel.getByRole("status")).toContainText("账户已停止全部运行");
-
+    await expect(panel.getByRole("status")).toContainText("本次推荐已取消");
+    await expect(panel.getByRole("button", { name: "继续本次推荐" })).toHaveCount(0);
     await page.goto(`/recommendations?runId=${aRootRunId}&resultId=${aRun.result.resultId}`);
     await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
     await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
@@ -519,33 +526,29 @@ test("同一账户全局停止保留历史 A，解除后只由用户继续 B", a
     await page.getByRole("button", { name: "解除全局停止" }).click();
     expect((await releaseResponse).status()).toBe(200);
     await expect.poll(() => accountRunControl(request, account.token)).toMatchObject({ stoppedAt: null, controlVersion: 2 });
+    // 解除后才让 Worker 消费旧消息，证明终态不会被队列重新激活。
+    const queuedJob = await queue.getJob(bRootRunId);
+    expect(queuedJob).toBeDefined();
+    if (!queuedJob) throw new Error("EXPECTED_QUEUED_B_JOB");
+    await queueEvents.waitUntilReady();
+    const consumed = queuedJob.waitUntilFinished(queueEvents, 30_000);
+    const [outcome] = await Promise.all([consumed, queue.resume()]);
+    paused = false;
+    expect(outcome).toBe("cancelled");
     await page.goto(`/home?runId=${bRootRunId}`);
-    await expect(panel.getByRole("status")).toContainText("本次推荐已暂停");
+    await expect(panel.getByRole("status")).toContainText("本次推荐已取消");
     expect(afterReleaseStartPosts).toEqual([]);
     expect(afterReleaseBControlPosts).toEqual([]);
-    expect(await recommendationRun(request, account.token, bRootRunId)).toMatchObject({ status: "paused", result: null, failure: null });
+    expect(await recommendationRun(request, account.token, bRootRunId)).toMatchObject({ status: "cancelled", result: null, failure: null });
     expect(await runGraph(account.userId, bRootRunId, account.targetId)).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 0, resultCount: 0, listCount: 0, itemCount: 0, journeyCompletionCount: 0 });
     expect(await recommendationListSnapshot(request, account.token, account.targetId, aRun.result.recommendationListId)).toEqual(aListSnapshot);
 
-    trackAfterRelease = false;
-    const resumeRequest = page.waitForRequest((value) => new URL(value.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && value.method() === "POST");
-    const resumeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && response.request().method() === "POST");
-    await panel.getByRole("button", { name: "继续本次推荐" }).click();
-    const resumeCommand = (await resumeRequest).postDataJSON() as { commandId: string; action: string };
-    expect(resumeCommand.action).toBe("resume");
-    expect((await resumeResponse).status()).toBe(200);
-    await expect.poll(() => recommendationControlBinding(account.userId, bRootRunId, resumeCommand.commandId), { timeout: 20_000 }).toMatchObject({ rootRunId: bRootRunId, physicalRunId: bRootRunId, physicalParentRunId: null, action: "resume", applied: true });
-    const bRun = await completedRun(request, account.token, bRootRunId);
-    expect(bRun.result).toMatchObject({ kind: "recommendation_list", itemCount: 1 });
-    await expect.poll(() => runGraph(account.userId, bRootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, journeyCompletionCount: 0, childParentMatches: true, resultProducerMatches: true });
-    const bFacts = await operationalFacts(account.userId, bRootRunId);
-    assertOperationalFacts(bFacts);
-    expect(bFacts.auditEventTypes).toEqual(expect.arrayContaining(["agent.run_paused", "agent.run_resumed"]));
+    await expect(panel.getByRole("button", { name: "继续本次推荐" })).toHaveCount(0);
     expect(await runGraph(account.userId, aRootRunId, account.targetId)).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, journeyCompletionCount: 1, journeyOwnerRootChildMatches: true });
-    expect(await recommendationListSnapshot(request, account.token, account.targetId, aRun.result.recommendationListId)).toEqual(aListSnapshot);
     expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
   } finally {
     if (paused) await queue.resume();
+    await queueEvents.close();
     await queue.close();
   }
 });

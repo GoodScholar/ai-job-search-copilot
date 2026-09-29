@@ -1,3 +1,4 @@
+import type { JobQualifications } from "@job-copilot/contracts/job-imports";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import {
@@ -79,6 +80,8 @@ export type DiscoveryDetail = {
   rawPayload: Record<string, unknown>;
   /** 已通过共享 normalizer 验证、但尚未取得 source version ID 的 provider 输出。 */
   normalization?: JobNormalizerOutput;
+  description?: string | null;
+  qualifications?: JobQualifications;
 };
 
 export type StoredDiscoveryObject = {
@@ -106,11 +109,7 @@ export function discoverySourceIdentifier(sourceId: string, detailId: string): s
 }
 
 function contentSha256(detail: DiscoveryDetail): string {
-  return sha256({
-    sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title,
-    location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline,
-    sourceType: detail.sourceType, isOfficial: detail.isOfficial,
-  });
+  return sha256(discoveryNormalizedData(detail));
 }
 
 function normalizedContentSha256(detail: DiscoveryDetail, output: JobNormalizerOutput): string {
@@ -141,7 +140,7 @@ function normalizedProjection(input: { sourcePostingVersionId: string; normalize
     if (input.detail.normalization) throw new Error("AGENT_RUN_PERSIST_FAILED");
     return {
       company: input.detail.company, title: input.detail.title, location: input.detail.location, postedAt: input.detail.postedAt,
-      deadline: input.detail.deadline, description: null, normalizedData: discoveryNormalizedData(input.detail),
+      deadline: input.detail.deadline, description: input.detail.description ?? null, normalizedData: discoveryNormalizedData(input.detail),
     };
   }
 }
