@@ -104,22 +104,22 @@ Expected: one focused fix commit; no commit when both axes are clean.
 - Consumes: Task 2's reviewed branch.
 - Produces: fresh full-suite evidence, a pushed PR #67 with a clean merge state, and Issue #61 closure linked to that PR.
 
-- [ ] **Step 1: Run the repository's full deterministic acceptance serially**
+- [x] **Step 1: Run the repository's full deterministic acceptance serially**
 
 Run: `pnpm test && pnpm typecheck && pnpm lint && pnpm build`
 Expected: every command exits 0; if infrastructure causes an unrelated failure, preserve the complete log, diagnose it, and rerun only after confirming no overlapping process remains.
 
-- [ ] **Step 2: Run the production-normalizer evaluation boundary**
+- [x] **Step 2: Run the production-normalizer evaluation boundary**
 
 Run: `pnpm --filter @job-copilot/contracts test -- job-normalizer-evaluation && pnpm --filter @job-copilot/model-access test -- job-normalizer`
 Expected: the versioned evaluation contract and production adapter tests pass; the credentialed live command remains explicit and is not silently substituted by Fake.
 
-- [ ] **Step 3: Prove branch isolation and push the existing branch**
+- [x] **Step 3: Prove branch isolation and push the existing branch**
 
 Run: `git merge-base --is-ancestor b1b21b3 HEAD; git merge-base --is-ancestor codex/recover-mixed-main-2026-09-29 HEAD; git push origin codex/issue-61-production-job-normalizer`
 Expected: both ancestry checks are non-zero and the existing remote branch advances without force-push.
 
-- [ ] **Step 4: Refresh PR #67 and close Issue #61 only after GitHub reports the PR mergeable**
+- [x] **Step 4: Refresh PR #67 and close Issue #61 only after GitHub reports the PR mergeable**
 
 Run: `gh pr view 67 --repo GoodScholar/ai-job-search-copilot --json mergeable,mergeStateStatus,statusCheckRollup,url`
 Expected: PR #67 is mergeable with fresh verification summarized; Issue #61 is closed with a completion comment and no duplicate PR is created.
