@@ -51,7 +51,7 @@ async function currentFacts(db: Pick<Database, "select">, userId: string, profil
 }
 
 type NormalizedJob = ReturnType<typeof JobNormalizerOutputSchema.parse>;
-type TriageJob = Pick<NormalizedJob, "company" | "title" | "location" | "deadline" | "deadlineProvenance" | "qualifications">;
+type TriageJob = Pick<NormalizedJob, "company" | "title" | "location" | "deadline" | "deadlineProvenance" | "fieldEvidence" | "qualifications">;
 const unknownQualifications = JobQualificationsSchema.parse({
   workMode: null, relocationRequired: null, salary: null, seniority: null, education: null,
   languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
@@ -75,6 +75,7 @@ function frozenDiscoveryJob(normalizedData: unknown, sourcePostingVersionId?: st
   const qualifications = JobQualificationsSchema.safeParse(source.qualifications);
   return {
     company: text("company"), title: text("title"), location: text("location"), deadline: text("deadline"), deadlineProvenance: null,
+    fieldEvidence: [],
     qualifications: qualifications.success ? qualifications.data : unknownQualifications,
   };
 }

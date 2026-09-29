@@ -21,7 +21,11 @@ function allPassInput(): TriageInput {
   return {
     sourcePostingVersionId, now: new Date("2026-09-01T00:00:00.000Z"),
     target: { targetId: "00000000-0000-4000-8000-000000000002", version: 1, constraints: { ...target.constraints, locations: [...target.constraints.locations], workModes: [...target.constraints.workModes], salary: { ...target.constraints.salary! }, dealBreakers: { ...target.constraints.dealBreakers } } },
-    job: { company: "示例", title: "frontend engineer", location: "上海", deadline: "2026-09-12T00:00:00.000Z", qualifications: {
+    job: { company: "示例", title: "frontend engineer", location: "上海", deadline: "2026-09-12T00:00:00.000Z", fieldEvidence: [
+      { field: "company", path: "lines:7-7", rawValue: "公司：示例", normalizedValue: "示例" },
+      { field: "title", path: "lines:8-8", rawValue: "职位：frontend engineer", normalizedValue: "frontend engineer" },
+      { field: "location", path: "lines:9-9", rawValue: "地点：上海", normalizedValue: "上海" },
+    ], qualifications: {
       workMode: { value: "onsite", evidence: { field: "workMode", path: "工作方式", value: "现场" } },
       relocationRequired: { value: true, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "是" } },
       salary: { value: { minimum: 35_000, maximum: 40_000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "薪资", value: "3.5-4万" } },
@@ -112,6 +116,15 @@ describe("job triage gates", () => {
     expect(evaluateJobTriage(input).gateResults.deal_breakers).toMatchObject({ verdict: "fail", jobEvidence: expect.any(Object), candidateEvidence: expect.any(Object) });
   });
 
+  it("公司、地点和标题结论沿用规范化器冻结的原文证据", () => {
+    const input = allPassInput();
+    input.target.constraints.dealBreakers.excludedCompanies = ["示例"];
+    const result = evaluateJobTriage(input);
+
+    expect(result.gateResults.location.jobEvidence).toMatchObject({ path: "lines:9-9", rawValue: "地点：上海", normalizedValue: "上海" });
+    expect(result.gateResults.deal_breakers.jobEvidence).toMatchObject({ path: "lines:7-7", rawValue: "公司：示例", normalizedValue: "示例" });
+  });
+
   it("keeps invalid and missing deadlines pending, and uses the UTC seven-day boundary", () => {
     const missing = allPassInput();
     missing.job.deadline = null;
@@ -183,6 +196,9 @@ describe("job triage gates", () => {
     input.target.constraints.industries = industries;
     input.job.location = locations[0];
     input.job.title = `frontend ${"x".repeat(19_991)}`;
+    input.job.fieldEvidence = input.job.fieldEvidence?.map((item) => item.field === "title"
+      ? { ...item, rawValue: input.job.title!, normalizedValue: input.job.title! }
+      : item);
     input.job.qualifications.industry = { value: industries[0], evidence: { field: "industry", path: "行业", value: industries[0] } };
 
     const result = evaluateJobTriage(input);
@@ -193,6 +209,9 @@ describe("job triage gates", () => {
 
     input.target.constraints.dealBreakers.excludedCompanies = values("公司");
     input.job.company = input.target.constraints.dealBreakers.excludedCompanies[0];
+    input.job.fieldEvidence = input.job.fieldEvidence?.map((item) => item.field === "company"
+      ? { ...item, rawValue: input.job.company!, normalizedValue: input.job.company! }
+      : item);
     const dealBreaker = evaluateJobTriage(input).gateResults.deal_breakers;
     expect(dealBreaker.candidateEvidence?.value).toHaveLength(256);
     expect(dealBreaker.candidateEvidence?.value).not.toContain("targetId");

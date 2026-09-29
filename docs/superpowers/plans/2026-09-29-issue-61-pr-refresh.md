@@ -44,22 +44,22 @@
 - Consumes: `origin/main@a6236ca` Alpha integration and PR head `c831bde` production normalizer behavior.
 - Produces: one conflict-free branch containing both sets of behavior, with no ancestry from local Issue #71 or the recovery branch.
 
-- [ ] **Step 1: Record the pre-merge safety evidence**
+- [x] **Step 1: Record the pre-merge safety evidence**
 
 Run: `git status --short --branch && git merge-base --is-ancestor b1b21b3 HEAD`
 Expected: clean Issue #61 branch and a non-zero ancestry check for `b1b21b3`.
 
-- [ ] **Step 2: Merge `origin/main` without committing and resolve only the six reported conflicts**
+- [x] **Step 2: Merge `origin/main` without committing and resolve only the six reported conflicts**
 
 Run: `git merge --no-ff --no-commit origin/main`
 Expected: conflicts only in the six files listed above; combine rather than discard independently reviewed behavior.
 
-- [ ] **Step 3: Verify the reconciled seams**
+- [x] **Step 3: Verify the reconciled seams**
 
 Run: `pnpm --filter @job-copilot/contracts test && pnpm --filter worker exec vitest run src/agent-runs/job-discovery-adapter-resolver.test.ts src/agent-runs/run-preflight.test.ts src/agent-runs/job-posting-normalizer-resolver.test.ts --no-file-parallelism && pnpm --filter @job-copilot/domain exec vitest run src/job-discovery-persistence.integration.test.ts src/discovery-job-normalization.test.ts src/trusted-job-normalization.test.ts --no-file-parallelism`
 Expected: all selected regression suites pass serially.
 
-- [ ] **Step 4: Commit the merge and plan**
+- [x] **Step 4: Commit the merge and plan**
 
 Run: `git add <resolved files> docs/superpowers/plans/2026-09-29-issue-61-pr-refresh.md && git commit`
 Expected: one merge commit whose second parent is `origin/main@a6236ca`.
@@ -74,22 +74,22 @@ Expected: one merge commit whose second parent is `origin/main@a6236ca`.
 - Consumes: Task 1's merged branch and GitHub Issue #61 acceptance criteria.
 - Produces: separate Standards and Spec findings, with every Critical/Important finding fixed through observed RED then GREEN.
 
-- [ ] **Step 1: Run the Standards and Spec reviews independently against `origin/main...HEAD`**
+- [x] **Step 1: Run the Standards and Spec reviews independently against `origin/main...HEAD`**
 
 Run: two fresh review agents using the repository standards/smell baseline and Issue #61 respectively.
 Expected: separate reports with file/hunk evidence and no cross-axis reranking.
 
-- [ ] **Step 2: For each blocking finding, add a failing regression test**
+- [x] **Step 2: For each blocking finding, add a failing regression test**
 
 Run: the narrowest affected Vitest/Playwright command before changing production code.
 Expected: FAIL for the reviewed defect, not for setup or syntax.
 
-- [ ] **Step 3: Apply the minimal fix and rerun the affected suite**
+- [x] **Step 3: Apply the minimal fix and rerun the affected suite**
 
 Run: the same narrow command followed by its owning package suite.
 Expected: GREEN with no warnings or unrelated failures introduced.
 
-- [ ] **Step 4: Commit the review fix pass**
+- [x] **Step 4: Commit the review fix pass**
 
 Run: `git commit -m "fix: address issue 61 review findings"` when changes exist.
 Expected: one focused fix commit; no commit when both axes are clean.

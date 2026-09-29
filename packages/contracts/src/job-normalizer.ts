@@ -36,8 +36,8 @@ export class JobNormalizerError extends Error {
 export const JobNormalizationEvidenceSchema = z.object({
   field: z.string().trim().min(1).max(64),
   path: z.string().trim().min(1).max(256),
-  rawValue: z.string().trim().min(1).max(2_000),
-  normalizedValue: z.string().trim().min(1).max(2_000),
+  rawValue: z.string().trim().min(1).max(20_000),
+  normalizedValue: z.string().trim().min(1).max(20_000),
 }).strict();
 
 export const JobNormalizerFieldEvidenceSchema = z.record(z.string().trim().min(1).max(64), JobNormalizationEvidenceSchema);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 import { buildTrustedNormalizationContent } from "../../../../packages/domain/src/trusted-job-normalization.js";
 import { evaluateJobTriage } from "../../../../packages/domain/src/job-triage.js";
+import { createOpenAiJobPostingNormalizer } from "@job-copilot/model-access";
 
 import { FakeJobDiscoveryAdapter } from "../agent-runs/fake-job-discovery-adapter.js";
 import { FakeJobPostingNormalizer } from "./fake-job-posting-normalizer.js";
@@ -153,6 +154,20 @@ describe("FakeJobPostingNormalizer", () => {
 });
 
 describe("FakeJobPostingNormalizer 调用中断", () => {
+  it("与生产 Adapter 对同一输入保留相同的请求前 token 上界", async () => {
+    const content = "公司：示例科技\n标题：工程师";
+    const observed: number[] = [];
+    const beforeRequest = async ({ inputTokenBound }: { inputTokenBound: number }) => {
+      observed.push(inputTokenBound);
+      throw new Error("stop-before-request");
+    };
+
+    await expect(new FakeJobPostingNormalizer().normalize(content, { beforeRequest })).rejects.toThrow("stop-before-request");
+    await expect(createOpenAiJobPostingNormalizer({ apiKey: "test-key" }).normalize(content, { beforeRequest })).rejects.toThrow("stop-before-request");
+    expect(observed).toHaveLength(2);
+    expect(observed[0]).toBe(observed[1]);
+  });
+
   it("beforeRequest 后取消不会返回成功", async () => {
     const controller = new AbortController();
     await expect(new FakeJobPostingNormalizer().normalize("公司：示例", { signal: controller.signal, beforeRequest: async () => { controller.abort(); } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });

@@ -37,10 +37,20 @@ export function openAiJobNormalizerMetadata(model: string): JobNormalizerMetadat
 
 export function resolveJobNormalizerConfig(environment: NodeJS.ProcessEnv): JobNormalizerMetadata {
   const adapter = environment.JOB_POSTING_NORMALIZER_ADAPTER ?? "fake";
-  if (adapter === "fake") return { adapter: "fake", normalizerVersion: "fake-job-normalizer-v2", promptVersion: JOB_NORMALIZER_PROMPT_VERSION, outputSchemaVersion: JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION, ruleVersion: JOB_NORMALIZER_RULE_VERSION, model: null };
+  if (adapter === "fake") {
+    if (environment.APP_ENV === "production") throw new Error("JOB_NORMALIZER_PRODUCTION_ADAPTER_REQUIRED");
+    return { adapter: "fake", normalizerVersion: "fake-job-normalizer-v2", promptVersion: JOB_NORMALIZER_PROMPT_VERSION, outputSchemaVersion: JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION, ruleVersion: JOB_NORMALIZER_RULE_VERSION, model: null };
+  }
   if (adapter !== "openai") throw new Error("JOB_NORMALIZER_ADAPTER_INVALID");
   if (!environment.OPENAI_API_KEY?.trim()) throw new Error("JOB_NORMALIZER_CREDENTIALS_MISSING");
   return openAiJobNormalizerMetadata(environment.OPENAI_LOW_COST_MODEL?.trim() || DEFAULT_MODEL);
+}
+
+export function assertJobNormalizerRequestBudget(content: string, options: JobNormalizerCallOptions = {}, model = DEFAULT_MODEL) {
+  const numberedContent = numberedJobPosting(content);
+  const requestedBudget = options.budget ?? DEFAULT_JOB_NORMALIZER_BUDGET;
+  const requestOverheadTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ model, store: false, max_output_tokens: requestedBudget.maxOutputTokens, reasoning: { effort: "low" }, input: [{ role: "developer", content: [{ type: "input_text", text: INSTRUCTIONS }] }], text: { format: { type: "json_schema", name: "job_normalization", strict: true, schema: RESPONSE_SCHEMA } } })).byteLength / 4);
+  return assertJobNormalizerInputBudget(content, options, requestOverheadTokens + new TextEncoder().encode(numberedContent).byteLength - new TextEncoder().encode(content).byteLength);
 }
 
 export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConfig, transport: JobNormalizerFetch = fetch) {
@@ -51,10 +61,8 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
   if (!config.apiKey.trim()) throw new Error("JOB_NORMALIZER_CREDENTIALS_MISSING");
   return { metadata, async normalize(content: string, options: JobNormalizerCallOptions = {}) {
     const numberedContent = numberedJobPosting(content);
-    const requestedBudget = options.budget ?? DEFAULT_JOB_NORMALIZER_BUDGET;
-    const requestOverheadTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ model, store: false, max_output_tokens: requestedBudget.maxOutputTokens, reasoning: { effort: "low" }, input: [{ role: "developer", content: [{ type: "input_text", text: INSTRUCTIONS }] }], text: { format: { type: "json_schema", name: "job_normalization", strict: true, schema: RESPONSE_SCHEMA } } })).byteLength / 4);
     // Serialized schema/instructions use a byte/4 estimate plus the exact numbered-input delta; raw input byte cap remains authoritative.
-    const budget = assertJobNormalizerInputBudget(content, options, requestOverheadTokens + new TextEncoder().encode(numberedContent).byteLength - new TextEncoder().encode(content).byteLength);
+    const budget = assertJobNormalizerRequestBudget(content, options, model);
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
     await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
     if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED", unknownJobNormalizerUsage());

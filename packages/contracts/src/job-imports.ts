@@ -9,8 +9,8 @@ export const JOB_IMPORT_CLAIM_LEASE_MS = 30_000;
 const filename = z.string().trim().min(1).max(255).regex(/\.md$/i);
 const nullableJobField = z.string().trim().min(1).max(20_000).nullable();
 const qualificationEvidence = z.object({
-  field: z.string().trim().min(1).max(64), path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(2_000),
-  rawValue: z.string().trim().min(1).max(2_000).optional(), normalizedValue: z.string().trim().min(1).max(2_000).optional(),
+  field: z.string().trim().min(1).max(64), path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(20_000),
+  rawValue: z.string().trim().min(1).max(20_000).optional(), normalizedValue: z.string().trim().min(1).max(20_000).optional(),
 }).strict();
 const evidenced = <T extends z.ZodType>(schema: T) => z.object({ value: schema, evidence: qualificationEvidence }).strict();
 const nullableEvidenced = <T extends z.ZodType>(schema: T) => evidenced(schema).nullable();

@@ -148,6 +148,20 @@ describe("job import contracts", () => {
     });
     expect(() => JobNormalizerModelOutputSchema.parse({ ...raw, qualifications: { ...raw.qualifications, workMode: { ...raw.qualifications.workMode!, evidence: { ...raw.qualifications.workMode!.evidence, field: "工作方式" } } } })).toThrow();
   });
+
+  it("允许完整岗位描述携带同长度的可回指证据", () => {
+    const description = "岗位职责".repeat(750);
+    const output = JobNormalizerOutputSchema.parse({
+      normalizerVersion: "fake-job-normalizer-v2", company: null, title: null, location: null,
+      postedAt: null, deadline: null, deadlineProvenance: null, description,
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+      fieldEvidence: [{ field: "description", path: "lines:1-1", rawValue: description, normalizedValue: description }],
+      usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
+
+    expect(validateJobNormalizerOutput(description, output)).toBe(true);
+  });
+
   it("treats legacy normalized data without qualifications as missing fields", () => {
     expect(JobNormalizerOutputSchema.parse({
       normalizerVersion: "fake-job-normalizer-v1", company: null, title: null, location: null,

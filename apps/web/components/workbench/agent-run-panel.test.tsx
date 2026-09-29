@@ -321,6 +321,17 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
   expect(screen.getByText("允许的操作范围")).toBeVisible();
 });
 
+it("确定性岗位规范化以用户语言说明且不暴露 Fake 实现名", () => {
+  const run = detail();
+  render(<AgentRunPanel initialRun={{ ...run, executionSpec: { ...run.executionSpec, model: {
+    adapter: "fake", model: null, normalizerVersion: "fake-job-normalizer-v2",
+    promptVersion: "job-normalizer-prompt-v7", outputSchemaVersion: "job-normalizer-v2", ruleVersion: "job-normalization-evidence-v4",
+  } } } as AgentRunDetail} targets={[target()]} />);
+
+  expect(screen.getByText("规则解析（未调用外部模型）")).toBeVisible();
+  expect(screen.queryByText("fake · Fake")).not.toBeInTheDocument();
+});
+
 it("对深度匹配运行保留匹配记录，同时仍允许发起下一次岗位发现", () => {
   const matching = {
     ...detail("completed"), workflowVersion: "deep-match-v1", currentStep: "completed",

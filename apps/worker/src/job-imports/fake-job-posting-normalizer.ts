@@ -1,5 +1,6 @@
 import { FAKE_JOB_NORMALIZER_METADATA, JobNormalizerOutputSchema, validateJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
-import { JobNormalizerError, assertJobNormalizerInputBudget, isJobInstructionLike, knownJobNormalizerUsage, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
+import { JobNormalizerError, isJobInstructionLike, knownJobNormalizerUsage, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
+import { assertJobNormalizerRequestBudget } from "@job-copilot/model-access";
 
 const INVALID_FIXTURE = "<!-- job-copilot:fake-normalizer-invalid -->";
 
@@ -61,7 +62,7 @@ export class FakeJobPostingNormalizer {
   readonly metadata = FAKE_JOB_NORMALIZER_METADATA;
 
   async normalize(content: string, options: JobNormalizerCallOptions = {}): Promise<unknown> {
-    const budget = assertJobNormalizerInputBudget(content, options);
+    const budget = assertJobNormalizerRequestBudget(content, options);
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
     await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
     // 与生产 Adapter 一致：provider 调用时间预算从请求检查点完成后开始；父 signal 仍即时生效。
