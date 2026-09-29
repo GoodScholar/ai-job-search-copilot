@@ -3,6 +3,7 @@ import type { Database } from "@job-copilot/database";
 import { createRunPreflightEvaluator, createRunPreflightQueries } from "@job-copilot/domain/run-preflight";
 import { resolveJobDiscoveryExecutionMode } from "@job-copilot/domain/job-discovery-execution-mode";
 import { GreenhouseSourceCapabilityAdapter } from "@job-copilot/domain/source-capabilities";
+import { resolveJobNormalizerConfig } from "@job-copilot/model-access";
 import { AuthModule } from "../auth/auth.module.js";
 import { DATABASE, RuntimeConfigModule } from "../config/runtime-config.module.js";
 import { ModelDiagnosticsModule } from "../model-diagnostics/model-diagnostics.module.js";
@@ -15,6 +16,7 @@ export function createConfiguredRunPreflightEvaluator(modelDiagnosticReader: Mod
     capabilityAdapter: new GreenhouseSourceCapabilityAdapter(),
     modelDiagnosticReader,
     discoveryExecutionMode: resolveJobDiscoveryExecutionMode(environment),
+    jobNormalizerMetadata: resolveJobNormalizerConfig(environment),
     id: () => crypto.randomUUID(),
     clock: () => new Date(),
   });

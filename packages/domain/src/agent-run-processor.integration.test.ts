@@ -25,6 +25,9 @@ import { effectiveAgentRunBudget } from "./effective-agent-run-budget";
 import * as effectiveAgentRunBudgetModule from "./effective-agent-run-budget";
 import type { SourceHealthDiscoveryAdapter } from "./source-health-discovery-adapter";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
+import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerError, type JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
+import { createOpenAiJobPostingNormalizer } from "../../model-access/src/job-normalizer.js";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -183,16 +186,18 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.transaction((tx) => ensureDeepMatchRunInTransaction({ transaction: tx, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("unexpected-preflight"); } } as any, userId: parent.userId, targetId: parent.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parent.runId }))).rejects.toThrow("unexpected-preflight");
   }, 15_000);
 
-  async function layeredRun() {
-    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
+  async function layeredRun(existing?: { userId: string; targetId: string }) {
+    const userId = existing?.userId ?? crypto.randomUUID(); const targetId = existing?.targetId ?? crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
     const targetSnapshot = { targetId, version: 1, priority: "primary" as const, state: "active" as const, constraints };
     const profileSnapshot = { targetId, version: 1, confirmedActiveSkillNames: [] };
     const watchlistSnapshot = { targetId, version: 0, companies: [] };
     const sourceScope = { kind: "layered_public" as const, trustedSources: [{ kind: "greenhouse_trusted_source" as const, source: { sourceId: "greenhouse:example", watchlistItemId, canonicalCompanyName: "Example", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "example" } }], publicDiscovery: { provider: "anysearch" as const, batchSize: 5 as const, maxVerificationCandidates: 10 as const, queries: [{ ordinal: 1, queryId, kind: "general" as const, stableFingerprint: "a".repeat(64), query: "AI 应用工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }] } };
-    await database.insert(jobAccounts).values({ id: userId });
-    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
-    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
-    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: "greenhouse:example:opening-1", sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: "opening-1" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    if (!existing) {
+      await database.insert(jobAccounts).values({ id: userId });
+      await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+      await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    }
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: `greenhouse:example:opening-1:${runId}`, sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: "opening-1" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: "a".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
     await database.insert(agentRuns).values({ id: runId, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot, profileSnapshot, watchlistSnapshot, sourceScope, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, toolAllowlist: LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, modelSnapshot: null, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now });
     await database.insert(agentRunSteps).values(["batch_search", "fetch_details", "persist_results"].map((stepKey, index) => ({ id: crypto.randomUUID(), userId, runId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
@@ -545,6 +550,48 @@ describe("AgentRunProcessor checkpoints", () => {
       search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
       searchBatch: async () => { calls.search += 1; return { ok: true, data: [summary] }; },
       getDetail: async () => { calls.detail += 1; return { ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: { source: "aurora" } } }; },
+    };
+  }
+
+  const productionNormalizerMetadata: JobNormalizerMetadata = {
+    adapter: "openai", normalizerVersion: "openai-responses-job-normalizer-v1", model: "gpt-test",
+    promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2",
+  };
+
+  function normalizedTrustedOutput() {
+    return JobNormalizerOutputSchema.parse({
+      ...productionNormalizerMetadata,
+      company: "Fictional Labs", title: "AI Engineer", location: "Shanghai", postedAt: null, deadline: null,
+      description: "负责 TypeScript 平台\n必备技能：TypeScript", qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "lines:5-5", value: "TypeScript", rawValue: "TypeScript", normalizedValue: "[\"TypeScript\"]" } } },
+      fieldEvidence: [
+        { field: "company", path: "lines:1-1", rawValue: "Fictional Labs", normalizedValue: "Fictional Labs" },
+        { field: "title", path: "lines:2-2", rawValue: "AI Engineer", normalizedValue: "AI Engineer" },
+        { field: "location", path: "lines:3-3", rawValue: "Shanghai", normalizedValue: "Shanghai" },
+        { field: "description", path: "lines:4-5", rawValue: "负责 TypeScript 平台\n必备技能：TypeScript", normalizedValue: "负责 TypeScript 平台\n必备技能：TypeScript" },
+      ],
+      usage: { status: "known", inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+    });
+  }
+
+  async function configureV2ProductionNormalizerRun(job: { userId: string; runId: string }) {
+    const source = { sourceId: "greenhouse:production-normalizer", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "诱饵公司", careersUrl: "https://boards.greenhouse.io/production-normalizer", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "production-normalizer" };
+    await database.update(agentRuns).set({
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET,
+      modelSnapshot: productionNormalizerMetadata,
+      sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, watchlistVersion: 1, sources: [source] },
+    }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+    return source;
+  }
+
+  function productionV2Adapter(source: { sourceId: string }, detailIds: readonly string[] = ["701"]): JobDiscoveryAdapter {
+    return {
+      adapter: "greenhouse", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async (input: any) => { await input.beforeList?.(source.sourceId); return { ok: true, data: { items: detailIds.map((detailId) => ({ sourceId: source.sourceId, detailId, company: null, title: null, location: null })), scans: [{ sourceId: source.sourceId, observedDetailIds: [...detailIds], complete: true }] } }; },
+      getDetail: async ({ detailId }) => ({ ok: true, data: { sourceId: source.sourceId, detailId, company: "诱饵公司", title: "诱饵职位", location: "诱饵地点", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { company_name: "Fictional Labs", title: "AI Engineer", location: { name: "Shanghai" }, content: "负责 TypeScript 平台\n必备技能：TypeScript" } } }),
     };
   }
 
@@ -2557,7 +2604,7 @@ describe("AgentRunProcessor checkpoints", () => {
     if (!detail || detail.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION) throw new Error("expected v4 detail");
     expect(detail).toMatchObject({
       runId: job.runId,
-      usage: { results: 3, complete: true },
+      usage: { results: 3, complete: false },
       results: [
         { sourcePostingVersionId: secondExtraVersionId },
         { sourcePostingVersionId: job.sourcePostingVersionId },
@@ -3148,6 +3195,239 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ adapter: "greenhouse", usage: { toolCalls: 3, sourceRequests: 3, results: 1 } });
+  });
+
+  it("v2 冻结生产 normalizer 在请求前预检、结算 usage 并持久化原始岗位字段的规范化输出", async () => {
+    const job = await run();
+    const source = await configureV2ProductionNormalizerRun(job);
+    let calls = 0;
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "greenhouse", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async (input: any) => { await input.beforeList?.(source.sourceId); return { ok: true, data: { items: [{ sourceId: source.sourceId, detailId: "701", company: "诱饵公司", title: "诱饵职位", location: "诱饵地点" }], scans: [{ sourceId: source.sourceId, observedDetailIds: ["701"], complete: true }] } }; },
+      getDetail: async () => ({ ok: true, data: { sourceId: source.sourceId, detailId: "701", company: "诱饵公司", title: "诱饵职位", location: "诱饵地点", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { company_name: "Fictional Labs", title: "AI Engineer", location: { name: "Shanghai" }, content: "负责 TypeScript 平台\n必备技能：TypeScript" } } }),
+    };
+    const normalizer = {
+      metadata: productionNormalizerMetadata,
+      normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
+    };
+
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...job, finalAttempt: true });
+    expect(outcome).toBe("completed");
+
+    expect(calls).toBe(1);
+    await expect(Promise.all([
+      database.select({ company: jobOpportunities.company, title: jobOpportunities.title, location: jobOpportunities.location, description: jobOpportunities.description }).from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId)),
+      database.select({ modelCalls: agentRuns.modelCallCount, inputTokens: agentRuns.inputTokenCount, outputTokens: agentRuns.outputTokenCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId)).orderBy(asc(jobSourcePostingVersions.createdAt)),
+    ])).resolves.toEqual([
+      [expect.objectContaining({ company: "Fictional Labs", title: "AI Engineer", location: "Shanghai", description: "负责 TypeScript 平台\n必备技能：TypeScript" })],
+      [{ modelCalls: 1, inputTokens: 3, outputTokens: 5 }],
+      [expect.objectContaining({ normalizedData: expect.objectContaining({ company: "Fictional Labs", title: "AI Engineer", description: "负责 TypeScript 平台\n必备技能：TypeScript" }) })],
+    ]);
+    const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId)).orderBy(asc(jobSourcePostingVersions.createdAt));
+    expect((version!.normalizedData as any).fieldEvidence).toEqual(expect.arrayContaining([expect.objectContaining({ field: "company", sourcePostingVersionId: version!.id })]));
+    expect((version!.normalizedData as any).qualifications.requiredSkills).toEqual(expect.objectContaining({ value: ["TypeScript"], evidence: expect.objectContaining({ sourcePostingVersionId: version!.id, path: "lines:5-5" }) }));
+  });
+
+  it("v4 实际 runtime 以冻结模型规范化可信详情、投影 Opportunity，并在后续 run 复用已绑定版本", async () => {
+    const first = await layeredRun();
+    const second = await layeredRun({ userId: first.userId, targetId: first.targetId });
+    await database.update(agentRuns).set({ modelSnapshot: productionNormalizerMetadata }).where(and(eq(agentRuns.userId, first.userId), sql`${agentRuns.id} in (${first.runId}, ${second.runId})`));
+    const store = new Store(); let calls = 0;
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: store, evidenceStore: store as never,
+      trustedSourceAdapter: {
+        adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+        declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["normalized-1"], candidates: [{ sourceId: source.sourceId, detailId: "normalized-1" }] } }),
+        getSourceDetail: async ({ source, detailId }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, detailId, company: "诱饵公司", title: "诱饵职位", location: "诱饵地点", postedAt: null, deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: { company_name: "Fictional Labs", title: "AI Engineer", location: { name: "Shanghai" }, content: "负责 TypeScript 平台\n必备技能：TypeScript" } } }),
+      },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    });
+    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() });
+
+    await expect(processor.process({ version: 1, ...first, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, ...second, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, first.userId), sql`${jobSourcePostingVersions.normalizedData}->>'company' = 'Fictional Labs'`));
+    expect(version).toBeDefined();
+    expect((version!.normalizedData as any)).toMatchObject({ company: "Fictional Labs", title: "AI Engineer", description: "负责 TypeScript 平台\n必备技能：TypeScript" });
+    expect((version!.normalizedData as any).qualifications.requiredSkills).toEqual(expect.objectContaining({ value: ["TypeScript"], evidence: expect.objectContaining({ sourcePostingVersionId: version!.id, path: "lines:5-5" }) }));
+    await expect(database.select({ company: jobOpportunities.company, title: jobOpportunities.title, description: jobOpportunities.description, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, first.userId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ company: "Fictional Labs", title: "AI Engineer", description: "负责 TypeScript 平台\n必备技能：TypeScript", sourcePostingVersionId: version!.id })]));
+
+    const failed = await layeredRun({ userId: first.userId, targetId: first.targetId });
+    const failedMetadata = { ...productionNormalizerMetadata, normalizerVersion: "openai-responses-job-normalizer-auth-failure" };
+    await database.update(agentRuns).set({ modelSnapshot: failedMetadata }).where(eq(agentRuns.id, failed.runId));
+    const putsBeforeFailure = store.puts.length;
+    const authFailure = { metadata: failedMetadata, normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED"); } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => authFailure }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...failed, finalAttempt: true })).resolves.toBe("failed");
+    expect(store.puts).toHaveLength(putsBeforeFailure);
+    await expect(Promise.all([
+      database.select({ failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, failed.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, failed.runId)),
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, failed.runId)),
+    ])).resolves.toEqual([[{ failureCode: "AGENT_RUN_MODEL_AUTH_FAILED" }], [], []]);
+  });
+
+  it("v4 实际 runtime 通过同一冻结 normalizer 将公开页面投影为已绑定 Opportunity", async () => {
+    const job = await layeredRun();
+    await database.update(agentRuns).set({ modelSnapshot: productionNormalizerMetadata }).where(eq(agentRuns.id, job.runId));
+    const url = "https://boards.greenhouse.io/example/jobs/9001";
+    const publicOutput = JobNormalizerOutputSchema.parse({
+      ...productionNormalizerMetadata, company: null, title: "AI 应用工程师", location: null, postedAt: null, deadline: null, description: "职责：构建产品",
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "lines:3-3", value: "TypeScript", rawValue: "TypeScript", normalizedValue: "[\"TypeScript\"]" } } },
+      fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "AI 应用工程师", normalizedValue: "AI 应用工程师" }, { field: "description", path: "lines:2-2", rawValue: "职责：构建产品", normalizedValue: "职责：构建产品" }], usage: { status: "known", inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+    });
+    let calls = 0;
+    const evidenceStore = { put: async () => ({ created: true }), delete: async () => undefined };
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), contentStore: new Store(), evidenceStore,
+      trustedSourceAdapter: { adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, declareCapabilities: ({ sourceId }: any) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: [], candidates: [] } }), getSourceDetail: async () => { throw new Error("UNUSED"); } },
+      anySearch: { isConfigured: () => true, search: async ({ beforeRequest }: any) => { await beforeRequest(); return { candidates: [{ normalizedUrl: url, stableFingerprint: createHash("sha256").update(url).digest("hex") }] }; }, extract: async ({ candidate, beforeRequest }: any) => { await beforeRequest(); return { normalizedUrl: candidate.normalizedUrl }; } },
+      preflight: async ({ candidate }: any) => ({ normalizedUrl: candidate.normalizedUrl }),
+      fetcher: { fetch: async ({ candidate }: any) => ({ requestedUrl: candidate.normalizedUrl, finalUrl: candidate.normalizedUrl, canonicalUrl: candidate.normalizedUrl, rawHtml: "<main><h1>AI 应用工程师</h1><p>职责：构建产品</p><p>必备技能：TypeScript</p></main>", visibleText: "AI 应用工程师\n职责：构建产品\n必备技能：TypeScript", pageClassification: "job" as const, sourceKind: "official" as const }) },
+    });
+    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return publicOutput; } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, job.userId), sql`${jobSourcePostingVersions.normalizedData}->>'title' = 'AI 应用工程师'`));
+    expect((version!.normalizedData as any).qualifications.requiredSkills.evidence).toMatchObject({ sourcePostingVersionId: version!.id, path: "lines:3-3" });
+    await expect(database.select({ title: jobOpportunities.title, description: jobOpportunities.description, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ title: "AI 应用工程师", description: "职责：构建产品", sourcePostingVersionId: version!.id })]));
+  });
+
+  it("v2 冻结生产 metadata 缺 resolver 时稳定失败且不写入岗位结果", async () => {
+    const job = await run();
+    const source = await configureV2ProductionNormalizerRun(job);
+    let searchCalls = 0;
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "greenhouse", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => { searchCalls += 1; return { ok: true, data: { items: [], scans: [{ sourceId: source.sourceId, observedDetailIds: [], complete: true }] } }; },
+      getDetail: async () => { throw new Error("UNREACHABLE"); },
+    };
+
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("failed");
+
+    expect(searchCalls).toBe(0);
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId)),
+    ])).resolves.toEqual([[{ status: "failed", failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE" }], []]);
+  });
+
+  it("v2 已知 429 usage 结算后排队重试，未知 usage 则停止后续候选调用", async () => {
+    const retryJob = await run();
+    const retrySource = await configureV2ProductionNormalizerRun(retryJob);
+    const knownRate = {
+      metadata: productionNormalizerMetadata,
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); throw new JobNormalizerError("JOB_NORMALIZER_RATE_LIMITED"); },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(retrySource)), jobPostingNormalizerResolver: { resolve: () => knownRate }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...retryJob, finalAttempt: false })).resolves.toBe("retry");
+    await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, modelCalls: agentRuns.modelCallCount, totalTokens: agentRuns.totalTokenCount, usageComplete: agentRuns.usageComplete }).from(agentRuns).where(eq(agentRuns.id, retryJob.runId))).resolves.toEqual([{ status: "queued", failureCode: null, modelCalls: 1, totalTokens: 8, usageComplete: true }]);
+
+    const unknownJob = await run();
+    const unknownSource = await configureV2ProductionNormalizerRun(unknownJob);
+    let providerCalls = 0;
+    const unknownUsage = {
+      metadata: productionNormalizerMetadata,
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); providerCalls += 1; throw new Error("provider connection closed"); },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(unknownSource, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => unknownUsage }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...unknownJob, finalAttempt: true })).resolves.toBe("failed");
+    expect(providerCalls).toBe(1);
+    await expect(Promise.all([
+      database.select({ failureCode: agentRuns.failureCode, usageComplete: agentRuns.usageComplete, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, unknownJob.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, unknownJob.runId)),
+    ])).resolves.toEqual([[{ failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", usageComplete: false, modelCalls: 1 }], []]);
+  });
+
+  it("真实 OpenAI 429 未知 usage 保留限流原因并阻止同次后续 transport", async () => {
+    const job = await run();
+    const source = await configureV2ProductionNormalizerRun(job);
+    const transport = vi.fn().mockResolvedValue(new Response("", { status: 429 }));
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, transport);
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(source, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() });
+    await expect(processor.process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("failed");
+    expect(transport).toHaveBeenCalledOnce();
+    await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, usageComplete: agentRuns.usageComplete, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_MODEL_RETRYABLE", usageComplete: false, modelCalls: 1 }]);
+  });
+
+  it("真实 OpenAI transport 超时保留 active_duration，未知 usage 后不再请求下一候选", async () => {
+    const job = await run();
+    const source = await configureV2ProductionNormalizerRun(job);
+    const transport = vi.fn(async (_url: string, init: RequestInit) => await new Promise<Response>((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true })));
+    const adapter = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, transport);
+    const normalizer = { metadata: adapter.metadata, normalize: (content: string, options: any) => adapter.normalize(content, { ...options, budget: { ...options.budget, timeoutMs: 1 } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(source, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    expect(transport).toHaveBeenCalledOnce();
+    await expect(database.select({ failureCode: agentRuns.failureCode, terminationBudgetDimension: agentRuns.terminationBudgetDimension, usageComplete: agentRuns.usageComplete, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ failureCode: "AGENT_RUN_BUDGET_EXCEEDED", terminationBudgetDimension: "active_duration", usageComplete: false, modelCalls: 1 }]);
+  });
+
+  it("已结算 Fake 超时标记 active_duration，实际输出令牌超额仍标记 tokens", async () => {
+    const timeoutJob = await run();
+    const timeoutSource = await configureV2ProductionNormalizerRun(timeoutJob);
+    const delayedFake = new (await import("../../../apps/worker/src/job-imports/fake-job-posting-normalizer.js")).FakeJobPostingNormalizer({ testDelayMs: 150 });
+    const timedOutNormalizer = { metadata: productionNormalizerMetadata, normalize: (content: string, options: any) => delayedFake.normalize(content, { ...options, budget: { ...options.budget, timeoutMs: 100 } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(timeoutSource)), jobPostingNormalizerResolver: { resolve: () => timedOutNormalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...timeoutJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(database.select({ terminationBudgetDimension: agentRuns.terminationBudgetDimension, usageComplete: agentRuns.usageComplete, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, timeoutJob.runId))).resolves.toEqual([{ terminationBudgetDimension: "active_duration", usageComplete: true, totalTokens: 0 }]);
+
+    const tokenJob = await run();
+    const tokenSource = await configureV2ProductionNormalizerRun(tokenJob);
+    const tokenFake = new (await import("../../../apps/worker/src/job-imports/fake-job-posting-normalizer.js")).FakeJobPostingNormalizer();
+    const tokenLimitedNormalizer = { metadata: productionNormalizerMetadata, normalize: (content: string, options: any) => tokenFake.normalize(content, { ...options, budget: { ...options.budget, maxOutputTokens: 1 } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(tokenSource)), jobPostingNormalizerResolver: { resolve: () => tokenLimitedNormalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...tokenJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(database.select({ terminationBudgetDimension: agentRuns.terminationBudgetDimension, usageComplete: agentRuns.usageComplete, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, tokenJob.runId))).resolves.toEqual([{ terminationBudgetDimension: "tokens", usageComplete: true, totalTokens: 0 }]);
+  });
+
+  it("v2 normalizer 结算时遇到取消或累计模型预算，保留权威终态且不发布结果", async () => {
+    const cancelledJob = await run();
+    const cancelledSource = await configureV2ProductionNormalizerRun(cancelledJob);
+    const cancelled = {
+      metadata: productionNormalizerMetadata,
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, cancelledJob.runId)); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(cancelledSource)), jobPostingNormalizerResolver: { resolve: () => cancelled }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...cancelledJob, finalAttempt: true })).resolves.toBe("cancelled");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, cancelledJob.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, cancelledJob.runId)),
+    ])).resolves.toEqual([[{ status: "cancelled", failureCode: null, modelCalls: 1 }], []]);
+
+    const budgetJob = await run();
+    const budgetSource = await configureV2ProductionNormalizerRun(budgetJob);
+    await database.update(agentRuns).set({ budgetSnapshot: { ...PUBLIC_JOB_DISCOVERY_BUDGET, maxModelCalls: 1 } }).where(eq(agentRuns.id, budgetJob.runId));
+    let providerCalls = 0;
+    const limited = {
+      metadata: productionNormalizerMetadata,
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); providerCalls += 1; await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(budgetSource, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => limited }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...budgetJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    expect(providerCalls).toBe(1);
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind, modelCalls: agentRuns.modelCallCount, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, budgetJob.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, budgetJob.runId)),
+    ])).resolves.toEqual([[{ status: "failed", terminationKind: "budget_exhausted", modelCalls: 1, totalTokens: 8 }], []]);
+
+    const settledBudgetJob = await run();
+    const settledBudgetSource = await configureV2ProductionNormalizerRun(settledBudgetJob);
+    const actualOverBudget = {
+      metadata: productionNormalizerMetadata,
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 600, outputTokens: 119_500 }); return normalizedTrustedOutput(); },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(settledBudgetSource)), jobPostingNormalizerResolver: { resolve: () => actualOverBudget }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...settledBudgetJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind, modelCalls: agentRuns.modelCallCount, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, settledBudgetJob.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, settledBudgetJob.runId)),
+    ])).resolves.toEqual([[{ status: "failed", terminationKind: "budget_exhausted", modelCalls: 1, totalTokens: 120_100 }], []]);
   });
 
   it("v3 healthy + hard_failed 保留成功来源并以失败来源的 owner-bound health check 写入 Inbox", async () => {

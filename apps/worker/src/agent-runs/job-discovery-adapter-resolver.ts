@@ -73,13 +73,13 @@ export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.P
 
 /** v4 仅接受已冻结的分层公开发现规格；生产组装由 Module 注入 provider ports。 */
 export function createLayeredPublicJobDiscoveryWorkflowResolver(input: {
-  createWorkflow(): LayeredPublicJobDiscoveryWorkflow;
+  createWorkflow(executionSpec: unknown): LayeredPublicJobDiscoveryWorkflow;
 }): LayeredPublicJobDiscoveryWorkflowResolver {
   return {
     resolve({ executionSpec }) {
       const parsed = AgentRunExecutionSpecSchema.safeParse(executionSpec);
       if (!parsed.success || parsed.data.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
-      return input.createWorkflow();
+      return input.createWorkflow(parsed.data);
     },
   };
 }

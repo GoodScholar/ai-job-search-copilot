@@ -42,6 +42,10 @@ import {
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
 import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
+import { createDiscoveryJobNormalizer, DiscoveryJobNormalizationError, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
+import { normalizeTrustedDetails } from "./trusted-job-normalization.js";
+import { validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerError, JobNormalizerMetadataSchema, type JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -136,6 +140,8 @@ export type AgentRunProcessorDependencies = {
   sourceHealthAdapterResolver?: SourceHealthDiscoveryAdapterResolver;
   /** v4 的生产实现由 Slice 8 注入；这里不读取环境配置也不构造 provider client。 */
   layeredPublicWorkflowResolver?: LayeredPublicJobDiscoveryWorkflowResolver;
+  /** 由 Worker 按冻结 model snapshot 解析；processor 不读取环境。 */
+  jobPostingNormalizerResolver?: DiscoveryJobNormalizerResolver;
   checkpoint: AgentRunCheckpoint;
   contentStore: DiscoveryContentStore;
   auditTrail: AuditTrail;
@@ -185,6 +191,19 @@ async function runTransaction<T>(deps: AgentRunProcessorDependencies, deadline: 
 
 function adapterFailure(error: unknown): Failure {
   if (error instanceof AgentRunBudgetError) return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source", budgetDimension: error.budgetDimension };
+  if (error instanceof JobNormalizerError) {
+    if (error.code === "JOB_NORMALIZER_RATE_LIMITED" || error.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
+    if (error.code === "JOB_NORMALIZER_AUTH_FAILED") return { failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", retryable: false, category: "model_auth" };
+    if (error.code === "JOB_NORMALIZER_INJECTION_DETECTED") return { failureCode: "AGENT_RUN_MODEL_POLICY_REJECTED", retryable: false, category: "model_policy" };
+    if (error.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: error.budgetDimension ?? "tokens" };
+    return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
+  }
+  if (error instanceof DiscoveryJobNormalizationError) {
+    if (error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_invalid" };
+    if (error.normalizerError?.code === "JOB_NORMALIZER_RATE_LIMITED" || error.normalizerError?.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: false, category: "model" };
+    if (error.normalizerError?.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: error.normalizerError?.budgetDimension ?? "tokens" };
+    return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
+  }
   if (error instanceof DeepMatchAdapterError) {
     if (error.category === "retryable") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
     if (error.category === "auth") return { failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", retryable: false, category: "model_auth" };
@@ -492,7 +511,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const trusted = new Set(input.trustedSourcePostingVersionIds);
     const sourceIdByVersionId = new Map<string, string | null>();
     for (const sourcePostingVersionId of input.sourcePostingVersionIds) {
-      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
+      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
       const trustedVersion = trusted.has(sourcePostingVersionId)
         && version?.sourceId !== null
         && input.trustedSourceIds.includes(version?.sourceId ?? "")
@@ -501,9 +520,16 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
       if (!version || (!attributed.has(sourcePostingVersionId) && !trustedVersion)) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
       sourceIdByVersionId.set(sourcePostingVersionId, version.sourceId);
       if (attributed.has(sourcePostingVersionId)) {
+        const frozenMetadata = JobNormalizerMetadataSchema.nullable().parse(run.modelSnapshot);
+        let normalized: ReturnType<typeof validatePersistedJobNormalizerOutput> | undefined;
+        if (frozenMetadata) normalized = validatePersistedJobNormalizerOutput(version.normalizedData, { sourcePostingVersionId, metadata: frozenMetadata });
+        else {
+          try { normalized = validatePersistedJobNormalizerOutput(version.normalizedData, { sourcePostingVersionId }); }
+          catch { /* 仅历史 null snapshot 兼容空版本。 */ }
+        }
         await persistJobOpportunity(transaction, {
           id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId, isOfficial: version.isOfficial,
-          company: null, title: null, location: null, postedAt: null, deadline: null, description: null, normalizedData: {},
+          company: normalized?.company ?? null, title: normalized?.title ?? null, location: normalized?.location ?? null, postedAt: normalized?.postedAt ?? null, deadline: normalized?.deadline ?? null, description: normalized?.description ?? null, normalizedData: version.normalizedData as Record<string, unknown>,
           dedupIdentity: version.sourceIdentifier, now: input.now,
         });
       }
@@ -541,7 +567,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
     ));
-    await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: input.now, failedAt: null, failureCode: null, terminationKind: terminal, terminationBudgetDimension: null, resultCount: Math.min(Number(resultCount), maxResults), usageComplete: true, version, updatedAt: input.now }).where(and(
+    await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: input.now, failedAt: null, failureCode: null, terminationKind: terminal, terminationBudgetDimension: null, resultCount: Math.min(Number(resultCount), maxResults), usageComplete: run.usageComplete, version, updatedAt: input.now }).where(and(
       eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"),
     ));
     const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: Math.min(Number(resultCount), maxResults) }, now: input.now });
@@ -667,14 +693,47 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       }
       const modelController = claimed.run.workflowVersion === "deep-match-v1" ? new AbortController() : undefined;
       const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
+      const discoveryController = claimed.run.workflowVersion !== "deep-match-v1" && claimed.run.workflowVersion !== "layered-public-job-discovery-v1" ? new AbortController() : undefined;
+      let discoveryMetadata: JobNormalizerMetadata | null = null;
+      let discoveryNormalizer: ReturnType<typeof createDiscoveryJobNormalizer> | undefined;
+      try {
+        discoveryMetadata = claimed.run.workflowVersion === "layered-public-job-discovery-v1"
+          ? layeredExecutionSpec.model
+          : claimed.run.adapter === "fake" || claimed.run.adapter === "greenhouse"
+            ? JobNormalizerMetadataSchema.nullable().parse(claimed.run.modelSnapshot)
+            : null;
+        if (discoveryMetadata) {
+          if (!deps.jobPostingNormalizerResolver) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_SNAPSHOT_UNSUPPORTED");
+          discoveryNormalizer = createDiscoveryJobNormalizer({
+            metadata: discoveryMetadata, normalizerResolver: deps.jobPostingNormalizerResolver, checkpoint,
+            userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount,
+            clock: deps.clock, deadline, signal: layeredController?.signal ?? discoveryController!.signal,
+            markUsageIncomplete: async () => { await deps.db.update(agentRuns).set({ usageComplete: false, updatedAt: deps.clock() }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken))); },
+          });
+        }
+      } catch (error) {
+        // 这里的唯一动态值是冻结 model snapshot；它无效时不能被归类成来源 adapter 故障。
+        return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" }, deadline });
+      }
       let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
       let heartbeatControl: "paused" | "cancelled" | undefined;
       const stopHeartbeat = startClaimHeartbeat(deps, {
         userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline,
-        onLeaseLost: () => { trustedStop = "stale"; layeredController?.abort(); modelController?.abort(); },
-        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); },
-        onDeadline: () => { trustedStop = "budget_exhausted"; layeredController?.abort(); modelController?.abort(); },
+        onLeaseLost: () => { trustedStop = "stale"; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
+        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
+        onDeadline: () => { trustedStop = "budget_exhausted"; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
       });
+      const normalizationInterruption = async (error: unknown): Promise<ProcessorOutcome | null> => {
+        const explicit = error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED";
+        const aborted = Boolean(discoveryController?.signal.aborted || layeredController?.signal.aborted || trustedStop);
+        if (!explicit && !aborted) return null;
+        if (explicit && (error.interruption === "paused" || error.interruption === "cancelled" || error.interruption === "budget_exhausted" || error.interruption === "stale")) return error.interruption;
+        const stopped = await checkPoint(checkpoint, {
+          userId: job.userId, runId: job.runId, claimToken: claimed.claimToken,
+          operation: "discovery_job_normalizer_interrupted", ordinal: 1,
+        });
+        return stopped ?? trustedStop ?? "stale";
+      };
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
         const before = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation, ordinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
@@ -797,7 +856,14 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         }
       }
       const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>; terminal?: SourceHealthTerminal; discoveryFacts?: RecommendationDiscoveryFacts }) => {
-        const stored = input.details.map((detail) => {
+        let normalizedDetails: DiscoveryDetail[];
+        try { normalizedDetails = discoveryNormalizer ? await normalizeTrustedDetails({ db: deps.db, userId: job.userId, metadata: discoveryMetadata!, details: input.details, normalizePosting: discoveryNormalizer.normalizePosting }) : input.details; }
+        catch (error) {
+          const interrupted = await normalizationInterruption(error);
+          if (interrupted) return interrupted;
+          return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+        }
+        const stored = normalizedDetails.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
         });
@@ -813,7 +879,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts, executionSourceScope); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: normalizedDetails, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts, executionSourceScope); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
@@ -845,6 +911,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           const workflowPromise = layeredWorkflow.run({
             userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
+            ...(discoveryNormalizer ? { normalizePosting: discoveryNormalizer.normalizePosting } : {}),
             onDiagnostics: (snapshot) => { latestDiagnostics = snapshot; },
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
@@ -898,6 +965,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           }
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
           if (error instanceof LayeredPublicWorkflowInterruption && trustedStop === error.outcome) return error.outcome;
+          const interrupted = await normalizationInterruption(error);
+          if (interrupted) return interrupted;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         } finally { clearTimeout(abortAtDeadline); }
       }

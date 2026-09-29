@@ -73,6 +73,30 @@ describe("database migrations", () => {
     ]));
   });
 
+  it("rejects missing or unaccounted model metadata without rejecting legacy zero-usage runs", async () => {
+    const accountId = "10f18b1b-6666-4f87-ae94-0c23635220a0";
+    const targetId = "61a0f372-5807-49a6-909a-914023540bfd";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${accountId})`);
+    await migratedDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${accountId}, 1, 'primary', 'active')`);
+    const insertRun = (id: string, key: string, workflow: string, modelSnapshot: unknown, calls: number, inputTokens: number, outputTokens: number) => migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist,
+        model_snapshot, model_call_count, input_token_count, output_token_count, total_token_count, status, current_step
+      ) values (
+        ${id}, ${accountId}, ${targetId}, ${key}, 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        ${workflow}, 'rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb,
+        ${modelSnapshot === null ? null : JSON.stringify(modelSnapshot)}::jsonb, ${calls}, ${inputTokens}, ${outputTokens}, ${inputTokens + outputTokens}, 'queued', 'queued'
+      )
+    `);
+
+    await expect(insertRun("7cb3b86c-6924-4802-9a92-ea0e8c306cbe", "1fb80cbd-ff12-42f5-9ba1-5a39674309bb", "workflow-v4", null, 0, 0, 0)).resolves.toBeDefined();
+    await expect(insertRun("514a9a75-3420-431a-a55f-b832d9242af6", "4d563243-51fa-4a2f-bf45-2b21b27f7192", "job-discovery-workflow-v1", { adapter: "fake" }, 0, 0, 0)).resolves.toBeDefined();
+    await expect(insertRun("7276814a-73f8-4dd4-aa4f-51f5f1ebbe6b", "eee2393a-63d0-4ea5-9bcb-27566a749670", "job-discovery-workflow-v1", null, 1, 2, 3)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun("31012b14-01cc-493b-83b2-a71ee06c5580", "7b6a4ff1-5a94-4be8-9e13-a29e62523db7", "deep-match-v1", null, 0, 0, 0)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun("5eb12f26-9954-46c6-a95e-c5ed92c18516", "4c09f9c4-0a16-445a-bca7-e65ddc31d813", "job-discovery-workflow-v3", null, 1, 2, 3)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
   it("PostgreSQL 17 的 transaction_timeout 覆盖同一事务内累计语句并回滚写入", async () => {
     const accountId = "c9462b80-3fa0-4400-87ea-bd909e703b18";
     // transaction_timeout 会终止会话；使用容器内独立 psql 验证，避免刻意杀死应用共享连接池。

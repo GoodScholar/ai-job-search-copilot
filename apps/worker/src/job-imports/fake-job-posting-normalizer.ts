@@ -1,11 +1,17 @@
+import { FAKE_JOB_NORMALIZER_METADATA, JobNormalizerOutputSchema, validateJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerError, isJobInstructionLike, knownJobNormalizerUsage, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
+import { assertJobNormalizerRequestBudget } from "@job-copilot/model-access";
+
 const INVALID_FIXTURE = "<!-- job-copilot:fake-normalizer-invalid -->";
 
-type Field = "company" | "location" | "postedAt" | "deadline" | "workMode" | "relocationRequired" | "salary" | "seniority" | "education" | "languages" | "workEligibility" | "industry" | "employmentType" | "requiredSkills";
+type Field = "company" | "title" | "location" | "postedAt" | "deadline" | "description" | "workMode" | "relocationRequired" | "salary" | "seniority" | "education" | "languages" | "workEligibility" | "industry" | "employmentType" | "requiredSkills";
 
 const labels = new Map<string, Field>([
   ["公司", "company"],
   ["公司名称", "company"],
   ["company", "company"],
+  ["标题", "title"],
+  ["title", "title"],
   ["地点", "location"],
   ["工作地点", "location"],
   ["location", "location"],
@@ -14,7 +20,10 @@ const labels = new Map<string, Field>([
   ["posted at", "postedAt"],
   ["deadline", "deadline"],
   ["截止日期", "deadline"],
+  ["截止时间", "deadline"],
   ["申请截止", "deadline"],
+  ["描述", "description"],
+  ["description", "description"],
   ["工作方式", "workMode"],
   ["work mode", "workMode"],
   ["是否需要搬迁", "relocationRequired"],
@@ -50,12 +59,34 @@ export const FAKE_JOB_NORMALIZER_INVALID_FIXTURE = INVALID_FIXTURE;
 export class FakeJobPostingNormalizer {
   constructor(private readonly options: { enableFailureFixture?: boolean; testDelayMs?: number } = {}) {}
 
-  async normalize(content: string): Promise<unknown> {
+  readonly metadata = FAKE_JOB_NORMALIZER_METADATA;
+
+  async normalize(content: string, options: JobNormalizerCallOptions = {}): Promise<unknown> {
+    const budget = assertJobNormalizerRequestBudget(content, options);
+    if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
+    await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
+    // 与生产 Adapter 一致：provider 调用时间预算从请求检查点完成后开始；父 signal 仍即时生效。
+    const timeout = AbortSignal.timeout(budget.timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    let usageReported = false;
+    const reportedUsage = () => usageReported ? knownJobNormalizerUsage(0, 0) : undefined;
+    const cancelled = () => {
+      if (signal.aborted) throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED", reportedUsage(), timeout.aborted ? "active_duration" : undefined);
+    };
+    cancelled();
+    await options.onUsage?.({ inputTokens: 0, outputTokens: 0 });
+    usageReported = true;
+    cancelled();
     if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
-    if (this.options.testDelayMs) await new Promise((resolve) => setTimeout(resolve, this.options.testDelayMs));
+    if (this.options.testDelayMs) await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, this.options.testDelayMs);
+      const abort = () => { clearTimeout(timer); reject(new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED", reportedUsage(), timeout.aborted ? "active_duration" : undefined)); };
+      signal.addEventListener("abort", abort, { once: true });
+    });
+    cancelled();
 
     const output = {
-      normalizerVersion: "fake-job-normalizer-v1",
+      ...this.metadata,
       company: null as string | null,
       title: null as string | null,
       location: null as string | null,
@@ -67,6 +98,7 @@ export class FakeJobPostingNormalizer {
         workMode: null, relocationRequired: null, salary: null, seniority: null, education: null,
         languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
       },
+      fieldEvidence: [] as Array<{ field: string; path: string; rawValue: string; normalizedValue: string }>,
     };
     const lines = content.split(/\r\n|\r|\n/u);
     let descriptionStart: number | undefined;
@@ -77,7 +109,10 @@ export class FakeJobPostingNormalizer {
       if (heading) {
         const headingText = heading[2]!.replace(/\s+#+\s*$/u, "").trim();
         const lower = headingText.toLowerCase();
-        if (heading[1]!.length === 1 && output.title === null && headingText) output.title = headingText;
+        if (heading[1]!.length === 1 && output.title === null && headingText) {
+          output.title = headingText;
+          output.fieldEvidence.push({ field: "title", path: `lines:${index + 1}-${index + 1}`, rawValue: headingText, normalizedValue: headingText });
+        }
         if (descriptionHeadings.has(lower)) {
           descriptionStart = index + 1;
           break;
@@ -89,19 +124,24 @@ export class FakeJobPostingNormalizer {
       if (!label) continue;
       const field = labels.get(label[1]!.trim().toLowerCase());
       const value = label[2]!.trim();
+      const path = `lines:${index + 1}-${index + 1}`;
       if (!field || !value) continue;
-      if (field === "company" || field === "location" || field === "postedAt" || field === "deadline") {
+      if (field === "company" || field === "title" || field === "location" || field === "postedAt" || field === "deadline" || field === "description") {
         if (output[field] !== null) continue;
         if (field === "postedAt" || field === "deadline") {
           const parsed = validIsoDateTime(value);
           output[field] = parsed;
-          if (field === "deadline" && parsed === null) output.deadlineProvenance = { field: "deadline", path: label[1]!.trim(), value, status: "invalid" };
-        } else output[field] = value;
+          if (parsed) output.fieldEvidence.push({ field, path, rawValue: value, normalizedValue: parsed });
+          if (field === "deadline" && parsed === null && looksLikeIsoDateTime(value)) output.deadlineProvenance = { field: "deadline", path, value, status: "invalid" };
+        } else {
+          output[field] = value;
+          output.fieldEvidence.push({ field, path, rawValue: value, normalizedValue: value });
+        }
         continue;
       }
       if (output.qualifications[field] !== null) continue;
       const qualification = parseQualification(field, value);
-      if (qualification !== null) output.qualifications[field] = { value: qualification, evidence: { field, path: label[1]!.trim(), value } } as never;
+      if (qualification !== null) output.qualifications[field] = { value: qualification, evidence: { field, path, value, rawValue: value, normalizedValue: typeof qualification === "string" ? qualification : JSON.stringify(qualification) } } as never;
     }
 
     if (descriptionStart !== undefined) {
@@ -112,8 +152,13 @@ export class FakeJobPostingNormalizer {
       }
       const copied = section.join("\n");
       output.description = copied.trim() ? copied : null;
+      if (output.description) output.fieldEvidence.push({ field: "description", path: `lines:${descriptionStart + 1}-${descriptionStart + section.length}`, rawValue: output.description, normalizedValue: output.description });
     }
-    return output;
+    const outputTokenBound = Math.ceil(new TextEncoder().encode(JSON.stringify(output)).byteLength / 4);
+    if (outputTokenBound > budget.maxOutputTokens || budget.inputTokenBound + outputTokenBound > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", knownJobNormalizerUsage(0, 0), "tokens");
+    const result = JobNormalizerOutputSchema.parse({ ...output, usage: knownJobNormalizerUsage(0, 0) });
+    if (!validateJobNormalizerOutput(content, result)) throw new JobNormalizerError("JOB_NORMALIZER_EVIDENCE_INVALID");
+    return result;
   }
 }
 
@@ -141,9 +186,11 @@ function parseQualification(field: Exclude<Field, "company" | "location" | "post
 }
 
 function validIsoDateTime(value: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value)) return null;
+  if (!looksLikeIsoDateTime(value)) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   const normalized = date.toISOString();
   return normalized.slice(0, 19) === value.slice(0, 19) ? normalized : null;
 }
+
+function looksLikeIsoDateTime(value: string): boolean { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value); }

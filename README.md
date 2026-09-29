@@ -68,3 +68,19 @@ CAREER_PARSER_ADAPTER=openai pnpm verify:career-parser:openai
 解析仅读取通过隐私检查的处理副本；每次最多处理 16 KiB UTF-8 文本、生成 4,000 个输出 Token、消耗 20,000 个总 Token，25 秒后终止。超出解析预算的资料会保留稳定失败原因，用户可精简后重试。文件上传上限与解析预算分别约束文件存储和模型调用。
 
 Adapter 使用 [Responses Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)，关闭响应存储、不提供工具，模型仅选择事实类型和原文行号；事实值由本地原文生成，并再次通过领域校验。密钥、原文、联系方式和供应方错误正文不会进入普通日志。
+
+### OpenAI 岗位规范化
+
+岗位规范化默认使用确定性的 Fake；生产 API 与 Worker 都需显式设置 `JOB_POSTING_NORMALIZER_ADAPTER=openai` 和 `OPENAI_API_KEY`，并共同沿用 `OPENAI_LOW_COST_MODEL`；可选 `OPENAI_ENDPOINT`、`OPENAI_ORGANIZATION` 与 `OPENAI_PROJECT`。独立评测固定包含三条正常合成岗位（两条标签输入和一条自然段输入）及一条零请求注入样例，只输出版本、状态、证据数量、用量状态与延迟分桶：
+
+```bash
+JOB_POSTING_NORMALIZER_ADAPTER=openai pnpm verify:job-normalizer:openai
+```
+
+每次调用最多接收 16 KiB 输入、生成 2,000 个输出 Token、总计 12,000 Token，并在 25 秒后终止；发现运行仍受其冻结预算策略约束。未在原文明确支持的字段保持未知，正文不会写入日志，Responses 关闭存储且不提供工具。
+
+兼容供应商的显式评测可临时提高**评测进程**等待上限，不会改变正常运行的 25 秒预算或输出、总 Token 限额：
+
+```bash
+JOB_POSTING_NORMALIZER_ADAPTER=openai JOB_NORMALIZER_EVALUATION_TIMEOUT_MS=60000 pnpm verify:job-normalizer:openai
+```

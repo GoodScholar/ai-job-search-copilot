@@ -421,6 +421,13 @@
       "when": 1789820003000,
       "tag": "0059_journey_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1789821000000,
+      "tag": "0060_discovery_normalizer_metadata",
+      "breakpoints": true
     }
   ]
 }

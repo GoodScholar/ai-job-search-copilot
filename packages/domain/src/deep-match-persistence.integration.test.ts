@@ -7,6 +7,7 @@ import {
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
 import { DeepMatchCandidateSchema, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { bindJobNormalizerOutput, JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDeepMatchRunInTransaction } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
@@ -182,6 +183,17 @@ describe("deep match persistence", () => {
     ]));
   });
 
+  it("current bound 快照缺 scalar 证据时不生成 deep-match 候选", async () => {
+    const input = await fixture({ score: 90 });
+    const output = JobNormalizerOutputSchema.parse({ normalizerVersion: "current-v1", adapter: "fake", model: null, promptVersion: "p1", outputSchemaVersion: "s1", ruleVersion: "r1", company: "示例科技", title: "前端工程师", location: "上海", postedAt: null, deadline: null, deadlineProvenance: null, description: "需要 TypeScript", qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "lines:5-5", value: "TypeScript", rawValue: "TypeScript", normalizedValue: "[\"TypeScript\"]" } } }, fieldEvidence: [{ field: "company", path: "lines:1-1", rawValue: "示例科技", normalizedValue: "示例科技" }, { field: "title", path: "lines:2-2", rawValue: "前端工程师", normalizedValue: "前端工程师" }, { field: "location", path: "lines:3-3", rawValue: "上海", normalizedValue: "上海" }, { field: "description", path: "lines:4-4", rawValue: "需要 TypeScript", normalizedValue: "需要 TypeScript" }], usage: { status: "known", inputTokens: 1, outputTokens: 1, totalTokens: 2 } });
+    const bound = bindJobNormalizerOutput(input.sourcePostingVersionId, output);
+    await db.update(jobSourcePostingVersions).set({ normalizedData: bound }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    const valid = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 });
+    expect(valid.candidates[0]!.jobEvidence).toEqual(expect.arrayContaining([expect.objectContaining({ provenance: expect.objectContaining({ path: "lines:2-2", originalValue: "前端工程师", normalizedValue: "前端工程师" }) })]));
+    await db.update(jobSourcePostingVersions).set({ normalizedData: { ...bound, fieldEvidence: bound.fieldEvidence.filter((item) => item.field !== "title") } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await expect(createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 })).resolves.toMatchObject({ candidates: [] });
+  });
+
   it("推荐 selection 使用本 root 冻结的来源版本，而不是当前机会指针或内容", async () => {
     const input = await fixture({ score: 90 });
     const [source] = await db.select({ sourcePostingId: jobSourcePostingVersions.sourcePostingId }).from(jobSourcePostingVersions)
@@ -349,6 +361,19 @@ describe("deep match persistence", () => {
       { sourcePostingVersionId: input.sourcePostingVersionId, field: "industry", path: "所属行业", originalValue: "互联网服务", normalizedValue: "互联网" },
       { sourcePostingVersionId: input.sourcePostingVersionId, field: "employmentType", path: "用工形式", originalValue: "正式直聘", normalizedValue: "direct" },
     ]));
+  });
+
+  it("不将错误绑定版本的当前规范化输出回退为可变岗位字段", async () => {
+    const input = await fixture();
+    await db.update(jobSourcePostingVersions).set({ normalizedData: {
+      normalizerVersion: "openai-job-normalizer-v1-test", adapter: "openai", model: "test", promptVersion: "job-normalizer-prompt-v2", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2",
+      company: "冻结公司", title: "冻结岗位", location: null, postedAt: null, deadline: null, deadlineProvenance: null, description: null,
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+      fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "冻结岗位", normalizedValue: "冻结岗位", sourcePostingVersionId: crypto.randomUUID() }], usage: { status: "known", inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    const selection = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 });
+    expect(selection.candidates).toEqual([]);
+    expect(selection.exclusions).toEqual([{ opportunityId: input.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }]);
   });
 
   it("bounds every frozen job evidence field before the candidate reaches the adapter", async () => {

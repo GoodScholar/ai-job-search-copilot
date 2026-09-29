@@ -20,8 +20,11 @@ describe("resolveE2eJobNormalizerDelayMs", () => {
 });
 
 describe("createConfiguredJobPostingNormalizer", () => {
-  it("测试环境允许 Fake，生产环境明确拒绝未配置 adapter", () => {
+  it("默认与测试环境使用 Fake，显式配置凭据后使用生产 Adapter", () => {
     expect(createConfiguredJobPostingNormalizer({ APP_ENV: "test" })).toBeDefined();
-    expect(() => createConfiguredJobPostingNormalizer({ APP_ENV: "production" })).toThrow("生产 JobPostingNormalizer adapter 尚未配置");
+    expect(() => createConfiguredJobPostingNormalizer({ APP_ENV: "production" })).toThrow("JOB_NORMALIZER_PRODUCTION_ADAPTER_REQUIRED");
+    expect(createConfiguredJobPostingNormalizer({ APP_ENV: "production", JOB_POSTING_NORMALIZER_ADAPTER: "openai", OPENAI_API_KEY: "test-key" })).toMatchObject({ metadata: { adapter: "openai" } });
+    expect(createConfiguredJobPostingNormalizer({ JOB_POSTING_NORMALIZER_ADAPTER: "openai", OPENAI_API_KEY: "test-key" })).toMatchObject({ metadata: { adapter: "openai" } });
+    expect(() => createConfiguredJobPostingNormalizer({ JOB_POSTING_NORMALIZER_ADAPTER: "openai" })).toThrow("JOB_NORMALIZER_CREDENTIALS_MISSING");
   });
 });

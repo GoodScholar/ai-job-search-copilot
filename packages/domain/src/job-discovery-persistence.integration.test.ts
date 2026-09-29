@@ -33,6 +33,7 @@ import { createJobDiscoveryPersistence, discoverySourceIdentifier, readDiscovery
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
+import { FAKE_JOB_NORMALIZER_METADATA, JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 
 const firstSeen = new Date("2026-08-30T00:00:00.000Z");
 const later = new Date("2026-08-31T00:00:00.000Z");
@@ -246,6 +247,8 @@ describe("job discovery persistence lifecycle", () => {
     const qualifications = JobQualificationsSchema.parse({ workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } });
     const withQualifications = { ...withDescription, qualifications };
     expect((await persist(withQualifications, "b".repeat(64))).cleanupObjectKeys).toEqual([]);
+    await expect(database.select({ description: jobOpportunities.description, normalizedData: jobOpportunities.normalizedData }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId)))
+      .resolves.toEqual([{ description: withDescription.description, normalizedData: expect.objectContaining({ description: withDescription.description, qualifications }) }]);
     expect((await persist(withQualifications, "b".repeat(64))).cleanupObjectKeys).toEqual([`${"b".repeat(64)}.json`]);
     await expect(database.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)).orderBy(asc(jobSourcePostingVersions.version))).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
   });
@@ -927,6 +930,32 @@ describe("job discovery persistence lifecycle", () => {
     const result = await persistence.persistSuccessfulDiscovery({ run, details: [{ sourceId: "greenhouse:stopped", detailId: "1", company: "Stopped", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }], scans: [{ sourceId: "greenhouse:stopped", observedDetailIds: ["1"], complete: true }], storedObjects: [{ sourceId: "greenhouse:stopped", detailId: "1", objectKey: "stopped.json", rawContentSha256: "a".repeat(64) }], now: later });
     expect(result).toMatchObject({ completed: false, cleanupObjectKeys: ["stopped.json"] });
     await expect(Promise.all([database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))])).resolves.toEqual([[], []]);
+  });
+
+  it("将归一化结果绑定到实际 source version，并以其完整字段投影机会", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const run = await claimRun(userId, targetId, later);
+    const output = JobNormalizerOutputSchema.parse({
+      ...FAKE_JOB_NORMALIZER_METADATA, company: "真实公司", title: "AI Engineer", location: "北京", postedAt: "2026-09-01T00:00:00.000Z", deadline: null, description: "要求：TypeScript, SQL",
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript", "SQL"], evidence: { field: "requiredSkills", path: "lines:5-5", value: "TypeScript, SQL", rawValue: "TypeScript, SQL", normalizedValue: '["TypeScript","SQL"]' } } },
+      fieldEvidence: [
+        { field: "company", path: "lines:1-1", rawValue: "真实公司", normalizedValue: "真实公司" }, { field: "title", path: "lines:2-2", rawValue: "AI Engineer", normalizedValue: "AI Engineer" },
+        { field: "location", path: "lines:3-3", rawValue: "北京", normalizedValue: "北京" }, { field: "postedAt", path: "lines:4-4", rawValue: "2026-09-01T00:00:00.000Z", normalizedValue: "2026-09-01T00:00:00.000Z" },
+        { field: "description", path: "lines:5-5", rawValue: "要求：TypeScript, SQL", normalizedValue: "要求：TypeScript, SQL" },
+      ], usage: { status: "known", inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+    });
+    const detail = { sourceId: "greenhouse:normalized", detailId: "701", company: "诱饵公司", title: "诱饵岗位", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { company_name: "真实公司", title: "AI Engineer", location: { name: "北京" }, first_published: "2026-09-01T00:00:00.000Z", content: "要求：TypeScript, SQL" }, normalization: output };
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+
+    await persistence.persistSuccessfulDiscovery({ run, details: [detail], scans: [{ sourceId: detail.sourceId, observedDetailIds: [detail.detailId], complete: true }], storedObjects: [{ sourceId: detail.sourceId, detailId: detail.detailId, objectKey: "normalized.json", rawContentSha256: "a".repeat(64) }], now: later });
+
+    const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId));
+    const [opportunity] = await database.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId, company: jobOpportunities.company, title: jobOpportunities.title, description: jobOpportunities.description, normalizedData: jobOpportunities.normalizedData }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId));
+    expect(version!.normalizedData).toMatchObject({ qualifications: { requiredSkills: { value: ["TypeScript", "SQL"], evidence: { sourcePostingVersionId: version!.id } } }, fieldEvidence: expect.arrayContaining([expect.objectContaining({ sourcePostingVersionId: version!.id })]) });
+    expect(opportunity).toMatchObject({ sourcePostingVersionId: version!.id, company: "真实公司", title: "AI Engineer", description: "要求：TypeScript, SQL", normalizedData: version!.normalizedData });
   });
 
 });

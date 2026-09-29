@@ -158,6 +158,9 @@ function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success
 }
 
 describe("agent run contracts", () => {
+  it("为新的公开发现运行保留有限的模型调用与 token 预算", () => {
+    expect(PUBLIC_JOB_DISCOVERY_BUDGET).toMatchObject({ maxModelCalls: 10, maxTokens: 120_000 });
+  });
   it("严格验证 v3 单来源 adapter 结果并绑定预期来源和详情", () => {
     const list = { ok: true, attemptCount: 1, data: { sourceId: "greenhouse:example", observedDetailIds: ["701"], candidates: [{ sourceId: "greenhouse:example", detailId: "701", company: null, title: "Engineer", location: "Beijing" }] } };
     const detail = { ok: true, attemptCount: 1, data: { sourceId: "greenhouse:example", detailId: "701", company: "Example", title: "Engineer", location: "Beijing", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers", isOfficial: true, absoluteUrl: "https://boards.greenhouse.io/example/jobs/701", rawPayload: {} } };
@@ -184,7 +187,14 @@ describe("agent run contracts", () => {
       adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
       outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
       toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
-      model: null,
+      model: {
+        adapter: "openai",
+        normalizerVersion: "job-normalizer-v1",
+        promptVersion: "job-normalizer-prompt-v1",
+        outputSchemaVersion: "job-normalizer-v1",
+        ruleVersion: "job-normalization-evidence-v2",
+        model: "gpt-5-mini",
+      },
       budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
 
@@ -716,7 +726,14 @@ describe("agent run contracts", () => {
       adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
       outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
       toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"],
-      model: null,
+      model: {
+        adapter: "openai",
+        normalizerVersion: "job-normalizer-v1",
+        promptVersion: "job-normalizer-prompt-v1",
+        outputSchemaVersion: "job-normalizer-v1",
+        ruleVersion: "job-normalization-evidence-v2",
+        model: "gpt-5-mini",
+      },
       budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
     const v4Detail = {

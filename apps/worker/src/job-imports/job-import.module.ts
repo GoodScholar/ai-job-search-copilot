@@ -4,8 +4,9 @@ import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { JOB_IMPORT_MAX_BYTES } from "@job-copilot/contracts/job-imports";
+import { createOpenAiJobPostingNormalizer, resolveJobNormalizerConfig } from "@job-copilot/model-access";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
-import { createJobImportProcessor, type JobContentStore } from "@job-copilot/domain/job-imports";
+import { createJobImportProcessor, type JobContentStore, type JobPostingNormalizer } from "@job-copilot/domain/job-imports";
 import { FakeJobPostingNormalizer } from "./fake-job-posting-normalizer.js";
 import { JobImportConsumer } from "./job-import-consumer.js";
 
@@ -21,8 +22,9 @@ export function resolveE2eJobNormalizerDelayMs(environment: NodeJS.ProcessEnv = 
   return configured;
 }
 
-export function createConfiguredJobPostingNormalizer(environment: NodeJS.ProcessEnv = process.env): FakeJobPostingNormalizer {
-  if (environment.APP_ENV === "production") throw new Error("生产 JobPostingNormalizer adapter 尚未配置");
+export function createConfiguredJobPostingNormalizer(environment: NodeJS.ProcessEnv = process.env): JobPostingNormalizer {
+  const metadata = resolveJobNormalizerConfig(environment);
+  if (metadata.adapter === "openai") return createOpenAiJobPostingNormalizer({ apiKey: environment.OPENAI_API_KEY!, model: metadata.model!, endpoint: environment.OPENAI_ENDPOINT, organization: environment.OPENAI_ORGANIZATION, project: environment.OPENAI_PROJECT });
   return new FakeJobPostingNormalizer({
     enableFailureFixture: environment.APP_ENV === "test",
     testDelayMs: resolveE2eJobNormalizerDelayMs(environment),

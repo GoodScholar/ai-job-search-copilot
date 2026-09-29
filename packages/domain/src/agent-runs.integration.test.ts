@@ -11,6 +11,8 @@ import { createJobTargetCommands } from "./job-targets";
 import { createAgentRunCheckpoint } from "./agent-run-checkpoint";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { RunPreflightSnapshotSchema } from "@job-copilot/contracts/run-preflight";
+import { PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
+import { FAKE_JOB_NORMALIZER_METADATA } from "@job-copilot/contracts/job-imports";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -99,8 +101,14 @@ describe("agent runs", () => {
     return { userId, targetId };
   }
 
-  function commands(queue: AgentRunQueue) {
-    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
+  function commands(queue: AgentRunQueue, normalizerMetadata?: { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null }, executionMode: "fake" | "greenhouse" | "layered_public" = "fake") {
+    const ready = createReadyRunPreflightEvaluator({ clock: () => now });
+    const runPreflight = normalizerMetadata ? {
+      async evaluate(db: Parameters<typeof ready.evaluate>[0], input: Parameters<typeof ready.evaluate>[1]) {
+        return { ...await ready.evaluate(db, input), jobNormalizerMetadata: normalizerMetadata };
+      },
+    } : ready;
+    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight, executionMode });
   }
 
   function watchlistCommands() {
@@ -149,6 +157,29 @@ describe("agent runs", () => {
       usage: { complete: true, activeDurationMs: 0, attempts: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0 },
       termination: null,
     });
+  });
+
+  it("普通启动冻结 normalizer 元数据，幂等重放不受后续环境配置影响", async () => {
+    const { userId, targetId } = await activeTarget();
+    await watchlistCommands().addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "Config test", careersUrl: "https://boards.greenhouse.io/config-test", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    const firstMetadata = { adapter: "openai" as const, normalizerVersion: "job-normalizer-v1", promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2", model: "gpt-5-mini" };
+    const changedMetadata = { ...firstMetadata, model: "gpt-5-next" };
+    const command = { targetId, idempotencyKey: crypto.randomUUID() };
+    const first = await commands(new MemoryQueue(), firstMetadata, "greenhouse").start({ userId, requestId: crypto.randomUUID(), command });
+    await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, first.runId)))
+      .resolves.toEqual([{ modelSnapshot: firstMetadata, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET }]);
+    await expect(commands(new MemoryQueue(), changedMetadata, "greenhouse").start({ userId, requestId: crypto.randomUUID(), command }))
+      .resolves.toMatchObject({ reused: true, runId: first.runId });
+    await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, first.runId)))
+      .resolves.toEqual([{ modelSnapshot: firstMetadata, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET }]);
+  });
+
+  it("Fake 发现同样冻结 normalizer 元数据，避免回退到未绑定展示字段", async () => {
+    const { userId, targetId } = await activeTarget();
+    const started = await commands(new MemoryQueue(), FAKE_JOB_NORMALIZER_METADATA).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+
+    await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
+      .resolves.toEqual([{ modelSnapshot: FAKE_JOB_NORMALIZER_METADATA }]);
   });
 
   it("拒绝缺失、跨账户或已停用目标，并让队列故障保留可恢复 run", async () => {

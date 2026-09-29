@@ -23,6 +23,7 @@
     "test:web": "pnpm --filter web test",
     "test:e2e": "pnpm --filter web test:e2e",
     "verify:career-parser:openai": "tsx apps/worker/src/career-import/verify-openai-career-parser.ts",
+    "verify:job-normalizer:openai": "tsx apps/worker/src/job-imports/verify-openai-job-normalizer.ts",
     "build:web": "pnpm --filter web build"
   }
 }

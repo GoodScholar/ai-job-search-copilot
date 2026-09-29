@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PUBLIC_JOB_DISCOVERY_BUDGET,
 } from "@job-copilot/contracts/agent-runs";
+import { FAKE_JOB_NORMALIZER_METADATA } from "@job-copilot/contracts/job-imports";
 import {
   LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
   LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
@@ -55,6 +56,8 @@ describe("layered public job discovery workflow", () => {
     expect(pendingPersisted).toBe(true);
 
     const calls: string[] = [];
+    let normalizerCalls = 0;
+    const normalizer = async () => { normalizerCalls += 1; return { ...FAKE_JOB_NORMALIZER_METADATA }; };
     const rebuiltProcess = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
       anySearch: {
@@ -70,14 +73,15 @@ describe("layered public job discovery workflow", () => {
         },
       },
       fetcher: { fetch: async ({ candidate }) => { calls.push(`fetch:${candidate.leadId}`); return { requestedUrl: candidate.normalizedUrl, finalUrl: candidate.normalizedUrl, canonicalUrl: candidate.normalizedUrl, rawHtml: "<h1>job</h1>", visibleText: "job", pageClassification: "job", sourceKind: "official" }; } },
-      gate: { verifyForClaim: async ({ candidate }) => { calls.push(`verify:${candidate.leadId}`); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, rejectForClaim: async () => undefined },
+      gate: { verifyForClaim: async ({ candidate, normalizePosting, normalizerMetadata }) => { expect(normalizerMetadata).toEqual(FAKE_JOB_NORMALIZER_METADATA); await normalizePosting!({ identity: candidate.leadId, content: "job" }); calls.push(`verify:${candidate.leadId}`); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, rejectForClaim: async () => undefined },
     });
     await expect(rebuiltProcess.run({
       userId: targetId, runId, claimToken: "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", now: new Date(), attemptCount: 2,
-      executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: pending.queryFingerprint, query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never,
-      beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal,
+      executionSpec: { ...executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: pending.queryFingerprint, query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]), model: FAKE_JOB_NORMALIZER_METADATA } as never,
+      beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, normalizePosting: normalizer, signal: new AbortController().signal,
     })).resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "verified" }, sourcePostingVersionIds: ["77777777-7777-8777-8777-777777777777"] });
     expect(calls).toEqual([`extract:${pending.leadId}`, `fetch:${pending.leadId}`, `verify:${pending.leadId}`]);
+    expect(normalizerCalls).toBe(1);
   });
 
   it("factory 对空 trusted scope 不发请求且报告 failed/empty trusted branch", async () => {
@@ -215,12 +219,14 @@ describe("layered public job discovery workflow", () => {
       adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
       outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
       toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"] as const,
-      model: null,
+      model: FAKE_JOB_NORMALIZER_METADATA,
       budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
     const controller = new AbortController();
     const claimToken = "99999999-9999-8999-8999-999999999999";
-    const result = await workflow.run({ userId: targetId, runId, claimToken, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, onDiagnostics: () => undefined, signal: controller.signal });
+    let normalizerCalls = 0;
+    const normalizer = async () => { normalizerCalls += 1; return { ...FAKE_JOB_NORMALIZER_METADATA }; };
+    const result = await workflow.run({ userId: targetId, runId, claimToken, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, onDiagnostics: () => undefined, normalizePosting: normalizer, signal: controller.signal });
 
     expect(calls).toEqual(["checkpoint:search", "checkpoint:search", "trusted", "checkpoint:search", `search:${queryId}`, "checkpoint:record_pending", "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "checkpoint:gate_verify", "verify"]);
     expect(result).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [], discoveryFacts: { version: "recommendation-discovery-facts-v1", trusted: [], publicQueries: [{ queryId, checked: true, outcome: "credible_results", losses: [] }] } });
@@ -230,6 +236,9 @@ describe("layered public job discovery workflow", () => {
     expect(proofs.extract).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
     expect(proofs.fetch).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
     expect(proofs.verify).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" }, claimToken });
+    await (proofs.verify as { normalizePosting: (input: { identity: string; content: string }) => Promise<unknown> }).normalizePosting({ identity: "normalizer-forwarding", content: "AI Engineer" });
+    expect(normalizerCalls).toBe(1);
+    expect((proofs.verify as { normalizerMetadata?: unknown }).normalizerMetadata).toEqual(FAKE_JOB_NORMALIZER_METADATA);
     expect(proofs.search).toMatchObject({ signal: controller.signal });
     expect(proofs.extract).toMatchObject({ signal: controller.signal });
     expect(proofs.fetch).toMatchObject({ signal: controller.signal });

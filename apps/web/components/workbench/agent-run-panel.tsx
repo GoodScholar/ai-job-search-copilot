@@ -469,7 +469,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
             <div><dt>结果格式版本</dt><dd>{run.executionSpec.outputSchemaVersion}</dd></div>
             <div><dt>来源范围</dt><dd>{run.executionSpec.sourceScope.kind === "deep_match" ? (run.executionSpec.sourceScope.opportunityId ? "单岗位重新评估" : "发现后的候选岗位") : "trustedSources" in run.executionSpec.sourceScope ? `${run.executionSpec.sourceScope.trustedSources.length} 个可信来源，${run.executionSpec.sourceScope.publicDiscovery.queries.length} 个公开发现查询` : `${run.executionSpec.sourceScope.sources.length} 个固定来源`}</dd></div>
             <div><dt>允许的操作范围</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
-            <div><dt>模型</dt><dd>{isDeepMatchRun(run) && run.executionSpec.model ? `${run.executionSpec.model.provider} · ${run.executionSpec.model.model}` : "本流程未使用模型"}</dd></div>
+            <div><dt>模型</dt><dd>{!run.executionSpec.model ? "本流程未使用模型" : "provider" in run.executionSpec.model ? `${run.executionSpec.model.provider} · ${run.executionSpec.model.model}` : run.executionSpec.model.adapter === "fake" ? "规则解析（未调用外部模型）" : `OpenAI · ${run.executionSpec.model.model}`}</dd></div>
           </dl>
         </section>
         <section aria-labelledby="agent-run-preflight-history-title" className="agent-run-detail"><h3 id="agent-run-preflight-history-title">本次启动条件</h3>{!run.preflightSnapshot ? <p>该历史运行创建时尚未记录运行前检查快照</p> : <RunPreflightHistory snapshot={run.preflightSnapshot} />}</section>

@@ -84,8 +84,8 @@ describe("统一运行前检查", () => {
     return itemId;
   }
 
-  function evaluator(input: { capabilities?: readonly (typeof completeCapabilities)[number][]; mode?: "greenhouse" | "fake" | "layered_public"; modelFingerprint?: string } = {}) {
-    return createRunPreflightEvaluator({ capabilityAdapter: capabilityAdapter(input.capabilities ?? completeCapabilities), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: input.modelFingerprint ?? fingerprint }), discoveryExecutionMode: input.mode ?? "greenhouse", id: randomUUID, clock: () => now });
+  function evaluator(input: { capabilities?: readonly (typeof completeCapabilities)[number][]; mode?: "greenhouse" | "fake" | "layered_public"; modelFingerprint?: string; jobNormalizerMetadata?: { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null } } = {}) {
+    return createRunPreflightEvaluator({ capabilityAdapter: capabilityAdapter(input.capabilities ?? completeCapabilities), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: input.modelFingerprint ?? fingerprint }), discoveryExecutionMode: input.mode ?? "greenhouse", jobNormalizerMetadata: input.jobNormalizerMetadata, id: randomUUID, clock: () => now });
   }
   const get = async (input: Parameters<ReturnType<typeof createRunPreflightQueries>["get"]>[0], value = evaluator()) => createRunPreflightQueries({ db: database, evaluator: value }).get(input);
 
@@ -210,6 +210,22 @@ describe("统一运行前检查", () => {
     expect(missingScheduledFor.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
     const manual = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
     expect(manual.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_READY");
+  });
+
+  it("OpenAI normalizer 在账户模型预算为零时于预检阻止，旧零预算 Fake 仍可读取", async () => {
+    const owner = await account({ fact: true, source: "greenhouse" });
+    const zeroBudgetFingerprint = "zero-budget-normalizer-fingerprint";
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: zeroBudgetFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.budgets.publicDiscovery.maxModelCalls = 0;
+    settings.budgets.publicDiscovery.maxTokens = 0;
+    await database.insert(accountRunPolicyRevisions).values({ id: randomUUID(), userId: owner.userId, revisionNumber: 1, settings, createdAt: now });
+    await database.insert(accountRunPolicies).values({ userId: owner.userId, currentRevisionNumber: 1, version: 1, updatedAt: now });
+    const openai = { adapter: "openai" as const, normalizerVersion: "job-normalizer-v1", promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2", model: "gpt-5-mini" };
+    expect((await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" }, evaluator({ modelFingerprint: zeroBudgetFingerprint, jobNormalizerMetadata: openai }))).items[6])
+      .toMatchObject({ code: "ACCOUNT_RUN_POLICY_BLOCKED", severity: "blocking" });
+    expect((await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" }, evaluator({ modelFingerprint: zeroBudgetFingerprint, jobNormalizerMetadata: { ...openai, adapter: "fake", model: null } }))).items[6])
+      .toMatchObject({ code: "ACCOUNT_RUN_POLICY_READY", severity: "informational" });
   });
 
   it("schedule 分别在当前时刻或 scheduledFor 越出窗口时阻塞", async () => {

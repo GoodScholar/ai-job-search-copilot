@@ -5,7 +5,7 @@ import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, LayeredPublicJobDiscover
 import type { RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 const LayeredPublicOperationKindSchema = z.enum(["search", "extract", "fetch", "record_pending", "gate_reject", "gate_verify"]);
-const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), onDiagnostics: z.function({ input: [z.array(z.unknown())], output: z.void() }), signal: z.instanceof(AbortSignal) }).strict();
+const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), onDiagnostics: z.function({ input: [z.array(z.unknown())], output: z.void() }), normalizePosting: z.function({ input: [z.object({ identity: z.string(), content: z.string() }).strict()], output: z.promise(z.unknown()) }).optional(), signal: z.instanceof(AbortSignal) }).strict();
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 type LayeredSpec = Extract<z.infer<typeof AgentRunExecutionSpecSchema>, { workflowVersion: "layered-public-job-discovery-v1" }>;
 type Query = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema>;
@@ -45,7 +45,7 @@ export type LayeredPublicWorkflowOutcome = {
   discoveryFacts?: RecommendationDiscoveryFacts;
   interruption?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 };
-export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; onDiagnostics(snapshot: readonly LayeredPublicWorkflowDiagnostic[]): void; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
+export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; onDiagnostics(snapshot: readonly LayeredPublicWorkflowDiagnostic[]): void; normalizePosting?(input: { identity: string; content: string }): Promise<unknown>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
 type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawHtml: string; visibleText: string; pageClassification: "job"; sourceKind: "official" | "aggregator" };
@@ -81,7 +81,7 @@ function boundedRejectedCandidateCount(value: unknown): number { return typeof v
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
-  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }>; discoveryFacts?: RecommendationDiscoveryFacts["trusted"] }> };
+  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void>; normalizePosting?: (input: { identity: string; content: string }) => Promise<unknown> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }>; discoveryFacts?: RecommendationDiscoveryFacts["trusted"] }> };
   anySearch: { isConfigured?(): boolean; search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[]; rejectedCandidateCount?: number } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void>; authorizeRecoveredCandidate(input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }): Promise<boolean> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
   leads: {
@@ -90,7 +90,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     authorizeRecoveredCandidateForClaim?(input: { userId: string; runId: string; queryId: string; candidateFingerprint: string; leadId: string; claimToken: string; now: Date }): Promise<boolean>;
   };
   fetcher: { fetch(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal }): Promise<Page> };
-  gate: { verifyForClaim(input: { candidate: RecoveredCandidateCapability; candidateFingerprint: string; extract: { normalizedUrl: string }; page: Page; claimToken: string; now: Date }): Promise<{ sourcePostingVersionId: string }>; rejectForClaim(input: { candidate: RecoveredCandidateCapability; code: RejectionCode; claimToken: string; now: Date }): Promise<void> };
+  gate: { verifyForClaim(input: { candidate: RecoveredCandidateCapability; candidateFingerprint: string; extract: { normalizedUrl: string }; page: Page; claimToken: string; now: Date; normalizePosting?: (input: { identity: string; content: string }) => Promise<unknown>; normalizerMetadata?: unknown }): Promise<{ sourcePostingVersionId: string }>; rejectForClaim(input: { candidate: RecoveredCandidateCapability; code: RejectionCode; claimToken: string; now: Date }): Promise<void> };
 }): LayeredPublicJobDiscoveryWorkflow {
   return { async run(input) {
     const value = RunInputSchema.parse(input);
@@ -121,7 +121,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     };
     };
     try {
-    trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
+    trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }), normalizePosting: value.normalizePosting });
     sourcePostingVersionIds.push(...trusted.verifiedSourcePostingVersionIds);
     sourceIssues.push(...(trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []));
     if (spec.sourceScope.publicDiscovery.queries.length > 0 && deps.anySearch.isConfigured?.() === false) {
@@ -150,7 +150,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
           }
           await value.beforePhysicalOperation({ kind: "fetch", identity: candidate.leadId }); const page = await deps.fetcher.fetch({ candidate, signal: value.signal });
           await value.beforePhysicalOperation({ kind: "gate_verify", identity: candidate.leadId });
-          const verified = await deps.gate.verifyForClaim({ candidate, candidateFingerprint: candidateFingerprint(candidate.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1; publicState.verified = true; verifiedFingerprints.add(candidate.stableFingerprint);
+          const verified = await deps.gate.verifyForClaim({ candidate, candidateFingerprint: candidateFingerprint(candidate.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now, normalizePosting: value.normalizePosting, normalizerMetadata: spec.model }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1; publicState.verified = true; verifiedFingerprints.add(candidate.stableFingerprint);
         } catch (error) {
           const code = rejection(error);
           if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: candidate.leadId }); await deps.gate.rejectForClaim({ candidate, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); recordPublicFailure(publicState, false); }
@@ -211,7 +211,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
           }
           await value.beforePhysicalOperation({ kind: "fetch", identity: pending.leadId }); const page = await deps.fetcher.fetch({ candidate: recovered, signal: value.signal });
           await value.beforePhysicalOperation({ kind: "gate_verify", identity: pending.leadId });
-          const verified = await deps.gate.verifyForClaim({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1; publicState.verified = true; verifiedFingerprints.add(recovered.stableFingerprint);
+          const verified = await deps.gate.verifyForClaim({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now, normalizePosting: value.normalizePosting, normalizerMetadata: spec.model }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1; publicState.verified = true; verifiedFingerprints.add(recovered.stableFingerprint);
         } catch (error) {
           const code = rejection(error);
           if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.rejectForClaim({ candidate: recovered, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); recordPublicFailure(publicState, false); }

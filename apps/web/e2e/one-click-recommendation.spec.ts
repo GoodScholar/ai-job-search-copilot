@@ -2,7 +2,6 @@ import { Client } from "pg";
 import { JourneyMetricEventSchema } from "@job-copilot/contracts/journey-metrics";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
-import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 import { Queue, QueueEvents } from "bullmq";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
@@ -37,38 +36,6 @@ const scenarioKeys = {
   },
 } as const;
 
-const completeSourceInput = JobNormalizerOutputSchema.parse({
-  normalizerVersion: "e2e-recommendation-source-input-v1",
-  company: "曙光云图",
-  title: "高级前端工程师",
-  location: "上海",
-  postedAt: "2026-08-20T00:00:00.000Z",
-  deadline: "2030-12-31T00:00:00.000Z",
-  deadlineProvenance: null,
-  description: "为可验证的求职工作台交付 TypeScript 前端功能。",
-  qualifications: {
-    workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } },
-    relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "否" } },
-    salary: { value: { minimum: 30_000, maximum: 45_000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "薪资", value: "CNY 30000-45000/month" } },
-    seniority: null,
-    education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } },
-    languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } },
-    workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } },
-    industry: { value: "云计算", evidence: { field: "industry", path: "行业", value: "云计算" } },
-    employmentType: { value: "direct", evidence: { field: "employmentType", path: "雇佣类型", value: "直接雇佣" } },
-    requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "必备技能", value: "TypeScript" } },
-  },
-});
-
-const publicSourceHealthInput = JobNormalizerOutputSchema.parse({
-  ...completeSourceInput,
-  normalizerVersion: "e2e-one-click-public-source-health-v1",
-  company: "One Click partial healthy",
-  title: "Engineer",
-  location: "Beijing",
-  description: "Engineer role with TypeScript delivery requirements from the controlled source input.",
-});
-
 type Account = { token: string; userId: string; targetId: string };
 type RecommendationRun = {
   runId: string;
@@ -98,8 +65,6 @@ type Scenario = "full" | "empty" | "partial";
 
 function auth(token: string) { return { authorization: `Bearer ${token}` }; }
 function scenarioKey(info: TestInfo, scenario: keyof typeof scenarioKeys["Desktop Chrome"]) { return scenarioKeys[info.project.name as keyof typeof scenarioKeys][scenario]; }
-function fixtureName(info: TestInfo, scenario: "full" | "partial" | "duplicate" | "recovery" | "global_stop_a" | "global_stop_b") { return `e2e_one_click_${info.project.name === "Desktop Chrome" ? "desktop" : "mobile"}_${scenario}`; }
-function sqlLiteral(value: string) { return `'${value.replaceAll("'", "''")}'`; }
 
 async function createAccount(request: APIRequestContext, info: TestInfo, scenario: Scenario, accountIdentity: string = scenario): Promise<Account> {
   const session = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
@@ -189,45 +154,6 @@ async function installFirstRandomUuid(page: Page, value: string): Promise<void> 
   };
   await page.addInitScript(install, value);
   await page.evaluate(install, value);
-}
-
-async function installSourceInputFixture(input: { name: string; userId: string; targetId: string; idempotencyKey: string; normalizedData?: typeof completeSourceInput }): Promise<void> {
-  const client = new Client({ connectionString: databaseUrl });
-  await client.connect();
-  try {
-    const payload = JSON.stringify(input.normalizedData ?? completeSourceInput);
-    await client.query(`
-      create or replace function ${input.name}_source_input() returns trigger language plpgsql as $$
-      begin
-        if exists (
-          select 1 from agent_runs root
-          where root.id = new.run_id
-            and root.user_id = ${sqlLiteral(input.userId)}::uuid
-            and root.target_id = ${sqlLiteral(input.targetId)}::uuid
-            and root.idempotency_key = ${sqlLiteral(input.idempotencyKey)}::uuid
-            and root.run_purpose = 'recommendation'
-            and root.parent_run_id is null
-        ) then
-          update job_source_posting_versions
-          set normalized_data = normalized_data || ${sqlLiteral(payload)}::jsonb
-          where user_id = new.user_id and id = new.source_posting_version_id;
-        end if;
-        return new;
-      end;
-      $$;
-      create trigger ${input.name}_source_input_trigger
-      after insert on agent_run_job_results
-      for each row execute function ${input.name}_source_input();
-    `);
-  } finally { await client.end(); }
-}
-
-async function removeSourceInputFixture(name: string): Promise<void> {
-  const client = new Client({ connectionString: databaseUrl });
-  await client.connect();
-  try {
-    await client.query(`drop trigger if exists ${name}_source_input_trigger on agent_run_job_results; drop function if exists ${name}_source_input()`);
-  } finally { await client.end(); }
 }
 
 async function sideFacts(userId: string, targetId: string): Promise<SideFacts> {
@@ -413,25 +339,21 @@ test("完整来源输入经真实推荐启动、worker 与发布链交付一条�
   const account = await createAccount(request, info, "full");
   const journeyId = await enrollMetricFixture(account.userId);
   const idempotencyKey = scenarioKey(info, "full");
-  const name = fixtureName(info, "full");
   const before = await sideFacts(account.userId, account.targetId);
-  try {
-    await installSourceInputFixture({ name, userId: account.userId, targetId: account.targetId, idempotencyKey });
-    const rootRunId = await startFromHome(page, request, account, idempotencyKey);
-    const run = await completedRun(request, account.token, rootRunId);
-    expect(run.result).toMatchObject({ kind: "recommendation_list", itemCount: 1, evidence: { discovery: { discoveredJobCount: 1 }, qualification: { evaluatedCount: 1, insufficientInformationCount: 0 }, coarseRanking: { eligibleCount: 1, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, finalRecommendationCount: 1 } } });
-    const result = run.result!;
-    if (result.kind !== "recommendation_list") throw new Error("EXPECTED_RECOMMENDATION_LIST");
-    await expect.poll(() => runGraph(account.userId, rootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, inboxCount: 1, journeyCompletionCount: 1, childParentMatches: true, resultProducerMatches: true, journeyOwnerRootChildMatches: true });
-    assertOperationalFacts(await operationalFacts(account.userId, rootRunId));
-    await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
-    await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
-    await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
-    await expectMetricCompletion(journeyId, account, "recommendation_list");
-    await page.reload();
-    await expectMetricCompletion(journeyId, account, "recommendation_list");
-    expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
-  } finally { await removeSourceInputFixture(name); }
+  const rootRunId = await startFromHome(page, request, account, idempotencyKey);
+  const run = await completedRun(request, account.token, rootRunId);
+  expect(run.result).toMatchObject({ kind: "recommendation_list", itemCount: 1, evidence: { discovery: { discoveredJobCount: 1 }, qualification: { evaluatedCount: 1, insufficientInformationCount: 0 }, coarseRanking: { eligibleCount: 1, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, finalRecommendationCount: 1 } } });
+  const result = run.result!;
+  if (result.kind !== "recommendation_list") throw new Error("EXPECTED_RECOMMENDATION_LIST");
+  await expect.poll(() => runGraph(account.userId, rootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, inboxCount: 1, journeyCompletionCount: 1, childParentMatches: true, resultProducerMatches: true, journeyOwnerRootChildMatches: true });
+  assertOperationalFacts(await operationalFacts(account.userId, rootRunId));
+  await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
+  await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
+  await expectMetricCompletion(journeyId, account, "recommendation_list");
+  await page.reload();
+  await expectMetricCompletion(journeyId, account, "recommendation_list");
+  expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
 });
 
 test("可信空来源回执经真实推荐启动、worker 与发布链交付暂无推荐", async ({ page, request }, info) => {
@@ -461,12 +383,10 @@ test("同一会话的同键重放与不同键并发只保留一个推荐 root", 
   test.skip(sourceHealthOnly, "重复启动仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "full", "duplicate");
   const key = scenarioKey(info, "duplicate");
-  const name = fixtureName(info, "duplicate");
   const before = await sideFacts(account.userId, account.targetId);
   const queue = new Queue(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
   let paused = false;
   try {
-    await installSourceInputFixture({ name, userId: account.userId, targetId: account.targetId, idempotencyKey: key });
     await setSessionCookie(page, account.token);
     await queue.pause();
     paused = true;
@@ -501,7 +421,6 @@ test("同一会话的同键重放与不同键并发只保留一个推荐 root", 
   } finally {
     if (paused) await queue.resume();
     await queue.close();
-    await removeSourceInputFixture(name);
   }
 });
 
@@ -510,14 +429,12 @@ test("离页后以精确 root SSR 恢复并继续同一推荐运行", async ({ p
   test.skip(sourceHealthOnly, "离页恢复仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "full", "recovery");
   const key = scenarioKey(info, "recovery");
-  const name = fixtureName(info, "recovery");
   const before = await sideFacts(account.userId, account.targetId);
   const queue = new Queue(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
   let paused = false;
   let postCount = 0;
   page.on("request", (value) => { if (value.url().endsWith("/api/recommendation-runs") && value.method() === "POST") postCount += 1; });
   try {
-    await installSourceInputFixture({ name, userId: account.userId, targetId: account.targetId, idempotencyKey: key });
     await queue.pause();
     paused = true;
     const rootRunId = await startFromHome(page, request, account, key);
@@ -544,7 +461,6 @@ test("离页后以精确 root SSR 恢复并继续同一推荐运行", async ({ p
   } finally {
     if (paused) await queue.resume();
     await queue.close();
-    await removeSourceInputFixture(name);
   }
 });
 
@@ -554,13 +470,9 @@ test("同一账户全局停止保留历史 A、取消排队 B，解除后不恢�
   const account = await createAccount(request, info, "full", "global-stop");
   const aKey = scenarioKey(info, "globalStopA");
   const bKey = scenarioKey(info, "globalStopB");
-  const aFixture = fixtureName(info, "global_stop_a");
-  const bFixture = fixtureName(info, "global_stop_b");
   const before = await sideFacts(account.userId, account.targetId);
   const queue = new Queue(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
   const queueEvents = new QueueEvents(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
-  let aFixtureInstalled = false;
-  let bFixtureInstalled = false;
   let paused = false;
   let trackAfterRelease = false;
   let bRootRunId = "";
@@ -573,8 +485,6 @@ test("同一账户全局停止保留历史 A、取消排队 B，解除后不恢�
     if (pathname === `/api/recommendation-runs/${bRootRunId}/controls`) afterReleaseBControlPosts.push(value.url());
   });
   try {
-    aFixtureInstalled = true;
-    await installSourceInputFixture({ name: aFixture, userId: account.userId, targetId: account.targetId, idempotencyKey: aKey });
     const aRootRunId = await startFromHome(page, request, account, aKey);
     const aRun = await completedRun(request, account.token, aRootRunId);
     expect(aRun.result).toMatchObject({ kind: "recommendation_list", itemCount: 1 });
@@ -586,8 +496,6 @@ test("同一账户全局停止保留历史 A、取消排队 B，解除后不恢�
     await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
     await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
 
-    bFixtureInstalled = true;
-    await installSourceInputFixture({ name: bFixture, userId: account.userId, targetId: account.targetId, idempotencyKey: bKey });
     await queue.pause();
     paused = true;
     bRootRunId = await startFromHome(page, request, account, bKey);
@@ -642,8 +550,6 @@ test("同一账户全局停止保留历史 A、取消排队 B，解除后不恢�
     if (paused) await queue.resume();
     await queueEvents.close();
     await queue.close();
-    if (bFixtureInstalled) await removeSourceInputFixture(bFixture);
-    if (aFixtureInstalled) await removeSourceInputFixture(aFixture);
   }
 });
 
@@ -652,22 +558,18 @@ test("一个可信来源交付且一个限流来源失败时发布带非零覆�
   test.skip(!sourceHealthOnly, "部分来源失败仅在 source-health phase 运行");
   const account = await createAccount(request, info, "partial");
   const key = scenarioKey(info, "partial");
-  const name = fixtureName(info, "partial");
   const before = await sideFacts(account.userId, account.targetId);
-  try {
-    await installSourceInputFixture({ name, userId: account.userId, targetId: account.targetId, idempotencyKey: key, normalizedData: publicSourceHealthInput });
-    const rootRunId = await startFromHome(page, request, account, key);
-    const run = await completedRun(request, account.token, rootRunId);
-    expect(run.result).toMatchObject({ kind: "recommendation_list", itemCount: 1, evidence: { discovery: { discoveredJobCount: 1 }, sourceCoverage: { checkedBranchCount: 2, credibleBranchCount: 1, verifiedJobCount: 1 }, coverageLosses: [expect.objectContaining({ affectedCount: 1 })] } });
-    expect(run.result?.evidence.coverageLosses).toHaveLength(1);
-    const result = run.result!;
-    if (result.kind !== "recommendation_list") throw new Error("EXPECTED_PARTIAL_RECOMMENDATION_LIST");
-    await expect.poll(() => runGraph(account.userId, rootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, inboxCount: 1, journeyCompletionCount: 1, childParentMatches: true, resultProducerMatches: true, journeyOwnerRootChildMatches: true });
-    await page.goto(`/home?runId=${rootRunId}`);
-    await expect(page.locator(".recommendation-run-panel [role=status]")).toContainText("本次推荐已准备完成");
-    await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
-    await expect(page.getByText("来源健康度下降：影响 1 项来源检查，可稍后重试")).toBeVisible();
-    assertOperationalFacts(await operationalFacts(account.userId, rootRunId));
-    expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
-  } finally { await removeSourceInputFixture(name); }
+  const rootRunId = await startFromHome(page, request, account, key);
+  const run = await completedRun(request, account.token, rootRunId);
+  expect(run.result).toMatchObject({ kind: "recommendation_list", itemCount: 1, evidence: { discovery: { discoveredJobCount: 1 }, sourceCoverage: { checkedBranchCount: 2, credibleBranchCount: 1, verifiedJobCount: 1 }, coverageLosses: [expect.objectContaining({ affectedCount: 1 })] } });
+  expect(run.result?.evidence.coverageLosses).toHaveLength(1);
+  const result = run.result!;
+  if (result.kind !== "recommendation_list") throw new Error("EXPECTED_PARTIAL_RECOMMENDATION_LIST");
+  await expect.poll(() => runGraph(account.userId, rootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, inboxCount: 1, journeyCompletionCount: 1, childParentMatches: true, resultProducerMatches: true, journeyOwnerRootChildMatches: true });
+  await page.goto(`/home?runId=${rootRunId}`);
+  await expect(page.locator(".recommendation-run-panel [role=status]")).toContainText("本次推荐已准备完成");
+  await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
+  await expect(page.getByText("来源健康度下降：影响 1 项来源检查，可稍后重试")).toBeVisible();
+  assertOperationalFacts(await operationalFacts(account.userId, rootRunId));
+  expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
 });

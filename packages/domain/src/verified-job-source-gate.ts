@@ -14,6 +14,8 @@ import {
   SafeNormalizedPublicJobUrlSchema,
   isOfficialPublicJobAtsHost,
 } from "@job-copilot/contracts/job-discovery";
+import { JobNormalizerOutputSchema, bindJobNormalizerOutput, validateJobNormalizerOutput, validatePersistedJobNormalizerOutput, type JobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerMetadataSchema, type JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
 import { JOB_PAGE_MAX_BYTES } from "@job-copilot/source-access";
 import { z } from "zod";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -42,7 +44,12 @@ const VerifyInputSchema = z.object({
   extract: z.object({ normalizedUrl: SafeNormalizedPublicJobUrlSchema }).strict(),
   page: PageSchema, now: z.date(),
 }).strict();
-const VerifyForClaimInputSchema = VerifyInputSchema.extend({ claimToken: z.uuid() }).strict();
+const NormalizationOptionsSchema = z.object({
+  normalizePosting: z.function({ input: [z.object({ identity: z.string().min(1), content: z.string().min(1) }).strict()], output: z.promise(z.unknown()) }).optional(),
+  normalizerMetadata: JobNormalizerMetadataSchema.nullable().optional(),
+}).strict();
+const VerifyWithOptionsInputSchema = VerifyInputSchema.extend({ normalizePosting: NormalizationOptionsSchema.shape.normalizePosting, normalizerMetadata: NormalizationOptionsSchema.shape.normalizerMetadata }).strict();
+const VerifyForClaimInputSchema = VerifyWithOptionsInputSchema.extend({ claimToken: z.uuid() }).strict();
 const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), code: terminalRejectionCode, now: z.date() }).strict();
 const RejectForClaimInputSchema = RejectInputSchema.extend({ claimToken: z.uuid() }).strict();
 
@@ -97,9 +104,10 @@ function sourceType(page: z.infer<typeof PageSchema>, queryKind: z.infer<typeof 
   return queryKind === "target_company" ? "company_careers" as const : "public_web" as const;
 }
 
-function parseVerifyInput(input: unknown, schema: typeof VerifyInputSchema | typeof VerifyForClaimInputSchema) {
+function parseVerifyInput(input: unknown, schema: typeof VerifyWithOptionsInputSchema | typeof VerifyForClaimInputSchema) {
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_INVALID_INPUT");
+  if (parsed.data.normalizePosting && !parsed.data.normalizerMetadata) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_INVALID_INPUT");
   validatePage(parsed.data);
   return parsed.data;
 }
@@ -108,9 +116,11 @@ function evidenceObjectKeys(userId: string, sourceVersionId: string, rawHash: st
   const base = `accounts/${userId}/public-job-pages/${sourceVersionId}`;
   return { rawHtmlObjectKey: `${base}/${rawHash}.html`, visibleTextObjectKey: `${base}/${visibleHash}.txt` };
 }
-function deterministicSourceVersionId(input: { userId: string; leadId: string; sourceType: string; canonicalUrl: string; rawHash: string; visibleHash: string }): string {
+function deterministicSourceVersionId(input: { userId: string; leadId: string; sourceType: string; canonicalUrl: string; rawHash: string; visibleHash: string; metadataFingerprint?: string }): string {
   const value = createHash("sha256").update([
-    "public-job-source-generation-v1", input.userId, input.leadId, input.sourceType, input.canonicalUrl, input.rawHash, input.visibleHash,
+    input.metadataFingerprint ? "public-job-source-generation-v2" : "public-job-source-generation-v1",
+    input.userId, ...(input.metadataFingerprint ? [] : [input.leadId]), input.sourceType, input.canonicalUrl, input.rawHash, input.visibleHash,
+    ...(input.metadataFingerprint ? [input.metadataFingerprint] : []),
   ].join("\u001f"), "utf8").digest();
   value[6] = (value[6]! & 0x0f) | 0x80;
   value[8] = (value[8]! & 0x3f) | 0x80;
@@ -124,6 +134,9 @@ function stableJson(value: unknown): unknown {
   return value;
 }
 function sameJson(left: unknown, right: unknown): boolean { return JSON.stringify(stableJson(left)) === JSON.stringify(stableJson(right)); }
+function metadataFingerprint(metadata: JobNormalizerMetadata | null | undefined) {
+  return sha256(JSON.stringify(stableJson(metadata ?? { adapter: "legacy", normalizerVersion: "legacy", promptVersion: "legacy", outputSchemaVersion: "legacy", ruleVersion: "legacy", model: null })));
+}
 
 type PublicSourceIdentity = { taxonomyPolicy: string; canonicalUrl: string; finalUrl: string; finalUrls: string[] };
 function publicSourceIdentity(value: unknown): PublicSourceIdentity | undefined {
@@ -185,13 +198,13 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
   }
 
   return {
-    async verify(input: unknown) { return verify(input, VerifyInputSchema, false); },
+    async verify(input: unknown) { return verify(input, VerifyWithOptionsInputSchema, false); },
     async verifyForClaim(input: unknown) { return verify(input, VerifyForClaimInputSchema, true); },
     async reject(input: unknown) { return reject(input, RejectInputSchema, false); },
     async rejectForClaim(input: unknown) { return reject(input, RejectForClaimInputSchema, true); },
   };
 
-  async function verify(input: unknown, schema: typeof VerifyInputSchema | typeof VerifyForClaimInputSchema, claimBound: boolean) {
+  async function verify(input: unknown, schema: typeof VerifyWithOptionsInputSchema | typeof VerifyForClaimInputSchema, claimBound: boolean) {
       const value = parseVerifyInput(input, schema) as z.infer<typeof VerifyForClaimInputSchema>;
       const rawBytes = bytes(value.page.rawHtml);
       const visibleBytes = bytes(value.page.visibleText);
@@ -199,6 +212,32 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
       const contentSha256 = sha256(visibleBytes);
       const sourceIdentifier = sha256(value.page.canonicalUrl);
       const createdObjectKeys: string[] = [];
+      let normalizedOutput: JobNormalizerOutput | undefined;
+      if (value.normalizePosting) {
+        const reusable = await deps.db.transaction(async (transaction) => {
+          await acquireAccountAdvisoryLock(transaction, value.userId);
+          const [lead] = await transaction.select({ runId: jobDiscoveryLeads.runId, queryKind: jobDiscoveryLeads.queryKind, queryId: jobDiscoveryLeads.queryId, normalizedUrl: jobDiscoveryLeads.normalizedUrl, stableFingerprint: jobDiscoveryLeads.stableFingerprint, state: jobDiscoveryLeads.state, verifiedFinalUrl: jobDiscoveryLeads.verifiedFinalUrl }).from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId))).limit(1);
+          if (!lead) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND");
+          if (claimBound) await assertClaim(transaction, { userId: value.userId, runId: lead.runId, claimToken: value.claimToken });
+          if (lead.queryId !== value.candidate.queryId || lead.normalizedUrl !== value.candidate.normalizedUrl || lead.stableFingerprint !== value.candidate.candidateFingerprint || lead.state === "rejected" || lead.state === "verified" && lead.verifiedFinalUrl !== value.page.finalUrl) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
+          const expectedSourceType = sourceType(value.page, lead.queryKind as z.infer<typeof PublicJobDiscoveryQueryKindSchema>);
+          const expectedVersionId = deterministicSourceVersionId({ userId: value.userId, leadId: value.leadId, sourceType: expectedSourceType, canonicalUrl: value.page.canonicalUrl, rawHash: rawContentSha256, visibleHash: contentSha256, metadataFingerprint: metadataFingerprint(value.normalizerMetadata) });
+          const [existing] = await transaction.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostings.sourceType, expectedSourceType), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier), eq(jobSourcePostingVersions.id, expectedVersionId), eq(jobSourcePostingVersions.contentSha256, contentSha256), eq(jobSourcePostingVersions.rawContentSha256, rawContentSha256))).limit(1);
+          if (!existing) return false;
+          try {
+            const output = validatePersistedJobNormalizerOutput(existing.normalizedData, { sourcePostingVersionId: existing.id, metadata: value.normalizerMetadata ?? undefined });
+            return output.usage.status === "known" && validateJobNormalizerOutput(value.page.visibleText, output);
+          }
+          catch { return false; }
+        });
+        if (!reusable) {
+          const raw = await value.normalizePosting({ identity: value.leadId, content: value.page.visibleText });
+          const output = JobNormalizerOutputSchema.parse(raw);
+          if (output.usage.status !== "known" || !validateJobNormalizerOutput(value.page.visibleText, output)) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
+          if (value.normalizerMetadata && (output.adapter !== value.normalizerMetadata.adapter || output.normalizerVersion !== value.normalizerMetadata.normalizerVersion || output.promptVersion !== value.normalizerMetadata.promptVersion || output.outputSchemaVersion !== value.normalizerMetadata.outputSchemaVersion || output.ruleVersion !== value.normalizerMetadata.ruleVersion || output.model !== value.normalizerMetadata.model)) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
+          normalizedOutput = output;
+        }
+      }
       try {
         return await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, value.userId);
@@ -216,7 +255,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           const expectedOfficial = value.page.sourceKind === "official";
           const sourceVersionId = deterministicSourceVersionId({
             userId: value.userId, leadId: value.leadId, sourceType: expectedSourceType, canonicalUrl: value.page.canonicalUrl,
-            rawHash: rawContentSha256, visibleHash: contentSha256,
+            rawHash: rawContentSha256, visibleHash: contentSha256, ...(value.normalizePosting ? { metadataFingerprint: metadataFingerprint(value.normalizerMetadata) } : {}),
           });
           const objectKeys = evidenceObjectKeys(value.userId, sourceVersionId, rawContentSha256, contentSha256);
           let posting: { id: string; sourceType: string; sourceIdentifier: string; sourceId: string | null; sourceIdentity: unknown; isOfficial: boolean };
@@ -253,16 +292,26 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           )).where(and(
             eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id),
             eq(jobSourcePostingVersions.contentSha256, contentSha256), eq(jobSourcePostingVersions.rawContentSha256, rawContentSha256),
+            ...(value.normalizePosting ? [eq(jobSourcePostingVersions.id, sourceVersionId)] : []),
           )).limit(1);
-          if (existingVersion && (!sameJson(existingVersion.rawObjectReference, evidenceObjectKeys(value.userId, existingVersion.id, rawContentSha256, contentSha256))
-            || !sameJson(existingVersion.normalizedData, {}))) {
+          const reusableVersion = existingVersion;
+          let existingNormalizedInvalid = false;
+          if (reusableVersion && value.normalizePosting) {
+            try {
+              const output = validatePersistedJobNormalizerOutput(reusableVersion.normalizedData, { sourcePostingVersionId: reusableVersion.id, metadata: value.normalizerMetadata ?? undefined });
+              existingNormalizedInvalid = output.usage.status !== "known" || !validateJobNormalizerOutput(value.page.visibleText, output);
+            } catch { existingNormalizedInvalid = true; }
+          }
+          if (reusableVersion && (!sameJson(reusableVersion.rawObjectReference, evidenceObjectKeys(value.userId, reusableVersion.id, rawContentSha256, contentSha256))
+            || existingNormalizedInvalid || (!value.normalizePosting && !sameJson(reusableVersion.normalizedData, {})))) {
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           }
-          if (existingVersion && existingVersion.id !== sourceVersionId) await cleanupUnreferencedObjects(transaction, value.userId, Object.values(objectKeys));
-          if (lead.state === "verified" && lead.sourcePostingVersionId !== existingVersion?.id) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
+          if (!value.normalizePosting && existingVersion && !sameJson(existingVersion.normalizedData, {})) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
+          if (!value.normalizePosting && existingVersion && existingVersion.id !== sourceVersionId) await cleanupUnreferencedObjects(transaction, value.userId, Object.values(objectKeys));
+          if (lead.state === "verified" && lead.sourcePostingVersionId !== reusableVersion?.id) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           if (lead.state === "rejected") throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
 
-          let version = existingVersion;
+          let version = reusableVersion;
           if (!version) {
             let rawPut: { created: boolean };
             let visiblePut: { created: boolean };
@@ -283,7 +332,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             )).orderBy(desc(jobSourcePostingVersions.version)).limit(1);
             const [createdVersion] = await transaction.insert(jobSourcePostingVersions).values({
               id: sourceVersionId, userId: value.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
-              contentSha256, rawContentSha256, rawObjectReference: objectKeys, normalizedData: {}, retrievedAt: value.now, createdAt: value.now,
+              contentSha256, rawContentSha256, rawObjectReference: objectKeys, normalizedData: normalizedOutput ? bindJobNormalizerOutput(sourceVersionId, normalizedOutput) : {}, retrievedAt: value.now, createdAt: value.now,
             }).returning({ id: jobSourcePostingVersions.id, sourcePostingId: jobSourcePostingVersions.sourcePostingId, version: jobSourcePostingVersions.version, contentSha256: jobSourcePostingVersions.contentSha256, rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference, normalizedData: jobSourcePostingVersions.normalizedData, createdAt: jobSourcePostingVersions.createdAt });
             if (!createdVersion) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
             version = createdVersion;
